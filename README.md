@@ -117,6 +117,14 @@ The action needs a URL that already answers. Two shapes that work:
 `compose up --wait` alone is often not enough — it waits for container health, not for your
 application to be serving. Both examples above poll an endpoint as well, which is worth copying.
 
+## Licence
+
+This action is [MIT licensed](LICENSE) — it is glue you run inside your own CI, so it needs terms
+that permit exactly that.
+
+That covers this repository. The runner image it pulls (`kernoio/ts-sandbox`) and the Kerno agent
+that authors scenarios in the first place are separate, and are not MIT licensed.
+
 ## Requirements
 
 A Linux runner with Docker. `ubuntu-latest` works as-is.
