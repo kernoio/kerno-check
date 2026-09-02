@@ -1,0 +1,159 @@
+name: Kerno Check
+description: Replay committed Kerno scenarios against a running system under test and report them as a PR check.
+author: Kerno
+
+branding:
+  icon: check-circle
+  color: blue
+
+inputs:
+  sut-url:
+    description: >-
+      Base URL of your already-running system under test, e.g. http://localhost:8080. Start it in
+      an earlier step — this action connects to it and never manages its lifecycle. A localhost or
+      127.0.0.1 URL is rewritten to host.docker.internal, because the scenarios execute inside a
+      container and a container's localhost is itself.
+    required: true
+  app-dir:
+    description: >-
+      Directory of the application whose scenarios to replay, relative to the repository root.
+      Leave unset to discover every <app>/.kerno/scenarios tree in the repository, which is what a
+      monorepo usually wants. Every discovered app is replayed against the same sut-url.
+    required: false
+    default: ""
+  scenarios:
+    description: >-
+      Replay only scenarios whose path, relative to their scenarios directory, matches this glob —
+      e.g. "endpoints/GET/**". `*` stays within a path segment, `**` crosses them. Leave unset to
+      replay all of them.
+    required: false
+    default: ""
+  image:
+    description: >-
+      The Kerno runner image. Pinned by digest so a given version of this action always runs the
+      same code; override only to test an unreleased build.
+    required: false
+    default: kernoio/ts-sandbox@sha256:0f5d2c152dcfd1ad0ceb5dbbf42b6b966de03d3a3d869c4f48f3a3d03eac74d1
+  report-path:
+    description: JUnit XML report destination, relative to the workspace.
+    required: false
+    default: kerno-junit.xml
+  fail-on-failure:
+    description: >-
+      Fail the step when a scenario fails. Set to false to report without gating — the outputs
+      still carry the counts. Scenarios that never executed (blocked, or not yet implemented) are
+      reported as skipped and never fail the step.
+    required: false
+    default: "true"
+
+outputs:
+  junit-path:
+    description: Path to the JUnit XML report.
+    value: ${{ steps.replay.outputs.junit-path }}
+  total:
+    description: Scenarios in the report.
+    value: ${{ steps.report.outputs.total }}
+  passed:
+    description: Scenarios that passed.
+    value: ${{ steps.report.outputs.passed }}
+  failed:
+    description: Scenarios that failed.
+    value: ${{ steps.report.outputs.failed }}
+  skipped:
+    description: Scenarios that never executed — blocked, or not yet implemented.
+    value: ${{ steps.report.outputs.skipped }}
+
+runs:
+  using: composite
+  steps:
+    - name: Replay Kerno scenarios
+      id: replay
+      shell: bash
+      env:
+        KERNO_SUT_URL: ${{ inputs.sut-url }}
+        KERNO_APP_DIR: ${{ inputs.app-dir }}
+        KERNO_SCENARIOS: ${{ inputs.scenarios }}
+        KERNO_IMAGE: ${{ inputs.image }}
+        KERNO_REPORT_PATH: ${{ inputs.report-path }}
+      run: |
+        set -euo pipefail
+
+        # A container's localhost is the container. Customers overwhelmingly run their SUT on the
+        # runner itself, so rewrite it rather than making every first attempt fail on a connection
+        # error that gives no hint why.
+        sut_url="$KERNO_SUT_URL"
+        case "$sut_url" in
+          *//localhost*|*//127.0.0.1*)
+            sut_url=$(printf '%s' "$sut_url" | sed -e 's|//localhost|//host.docker.internal|' -e 's|//127\.0\.0\.1|//host.docker.internal|')
+            echo "sut-url points at the runner; using $sut_url from inside the container"
+            ;;
+        esac
+
+        # Scenarios live in the checked-out repository, mounted read-only. One directory when
+        # app-dir is given, otherwise discover every .kerno/scenarios tree beneath the root.
+        if [ -n "$KERNO_APP_DIR" ]; then
+          scenarios_dir="${KERNO_APP_DIR%/}/.kerno/scenarios"
+          if [ ! -d "$GITHUB_WORKSPACE/$scenarios_dir" ]; then
+            echo "::error::no scenarios at $scenarios_dir — check the app-dir input"
+            exit 2
+          fi
+          scope_args=(--scenarios-dir="/workspace/$scenarios_dir")
+        else
+          scope_args=(--scenarios-root=/workspace)
+        fi
+
+        # An explicit `if` rather than `[ -n … ] && …`: under `set -e` a short-circuiting AND-OR
+        # list is only exempt while it is not the last statement, so the terse form is safe here
+        # by position alone and would fail silently if anything were ever appended after it.
+        if [ -n "$KERNO_SCENARIOS" ]; then
+          scope_args+=(--only="$KERNO_SCENARIOS")
+        fi
+
+        # A cancelled run leaves the container behind; the next run would then fail on the name
+        # conflict while still copying the PREVIOUS run's reports out — a stale pass.
+        docker rm -f kerno-check-run >/dev/null 2>&1 || true
+
+        set +e
+        docker run --name kerno-check-run \
+          --add-host=host.docker.internal:host-gateway \
+          --cap-add=NET_ADMIN \
+          -v "$GITHUB_WORKSPACE:/workspace:ro" \
+          "$KERNO_IMAGE" replay \
+            "${scope_args[@]}" \
+            --sut-base-url="$sut_url" \
+            --junit=/out/junit.xml \
+            --summary=/out/summary.md
+        replay_exit=$?
+        set -e
+
+        # Copied out rather than bind-mounted: a directory created in the same step that mounts it
+        # does not reliably receive the container's writes.
+        report_dir=$(mktemp -d)
+        docker cp kerno-check-run:/out/. "$report_dir/" || echo "::warning::the run produced no reports"
+        docker rm -f kerno-check-run >/dev/null 2>&1 || true
+
+        if [ -f "$report_dir/junit.xml" ]; then
+          mkdir -p "$(dirname "$GITHUB_WORKSPACE/$KERNO_REPORT_PATH")"
+          cp "$report_dir/junit.xml" "$GITHUB_WORKSPACE/$KERNO_REPORT_PATH"
+          echo "junit-path=$KERNO_REPORT_PATH" >> "$GITHUB_OUTPUT"
+        else
+          echo "junit-path=" >> "$GITHUB_OUTPUT"
+        fi
+
+        # The container cannot write to $GITHUB_STEP_SUMMARY — that path belongs to the runner.
+        if [ -f "$report_dir/summary.md" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+          cat "$report_dir/summary.md" >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+        echo "replay-exit=$replay_exit" >> "$GITHUB_OUTPUT"
+
+    - name: Read the report
+      id: report
+      shell: bash
+      env:
+        KERNO_JUNIT_PATH: ${{ steps.replay.outputs.junit-path }}
+        KERNO_REPLAY_EXIT: ${{ steps.replay.outputs.replay-exit }}
+        KERNO_FAIL_ON_FAILURE: ${{ inputs.fail-on-failure }}
+      run: |
+        set -euo pipefail
+        python3 "$GITHUB_ACTION_PATH/report.py"

@@ -1,0 +1,98 @@
+# Runs this action against a system under test, in this repository, on every change to it.
+#
+# Customers pin `uses: kernoio/kerno-check@v1` in their own workflows, so a regression here lands
+# in their PR checks rather than ours. This is the only place that catches it first.
+#
+# The fixture is deliberately mixed: one scenario passes, one is a stub. Asserting the stub is
+# reported SKIPPED is the load-bearing part — a fixture where everything passes would still look
+# green if the action started miscounting, which is precisely the failure being guarded against.
+name: self-test
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  self-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      # Stands in for the customer's application. Any HTTP service would do; the fixture's
+      # scenarios only assert on `GET /`, and the runner image happens to serve that.
+      - name: Start the system under test
+        run: |
+          docker run -d --name self-test-sut -p 8080:9876 \
+            kernoio/ts-sandbox@sha256:0f5d2c152dcfd1ad0ceb5dbbf42b6b966de03d3a3d869c4f48f3a3d03eac74d1
+          for _ in $(seq 1 45); do
+            if curl -fsS -o /dev/null http://localhost:8080/; then echo "SUT ready"; exit 0; fi
+            sleep 2
+          done
+          echo "the system under test never became ready" >&2
+          docker logs self-test-sut 2>&1 | tail -30 >&2
+          exit 1
+
+      # localhost on purpose: it is what a customer writes, and exercises the rewrite to
+      # host.docker.internal that the action performs.
+      - name: Run the action
+        id: kerno
+        uses: ./
+        with:
+          sut-url: http://localhost:8080
+          app-dir: test-fixture
+          report-path: reports/kerno-junit.xml
+
+      - name: Assert the action reported the fixture correctly
+        if: ${{ always() }}
+        env:
+          TOTAL: ${{ steps.kerno.outputs.total }}
+          PASSED: ${{ steps.kerno.outputs.passed }}
+          FAILED: ${{ steps.kerno.outputs.failed }}
+          SKIPPED: ${{ steps.kerno.outputs.skipped }}
+          JUNIT: ${{ steps.kerno.outputs.junit-path }}
+        run: |
+          set -euo pipefail
+          echo "outputs: total=$TOTAL passed=$PASSED failed=$FAILED skipped=$SKIPPED junit=$JUNIT"
+
+          problems=()
+          [ "$TOTAL" = "2" ]   || problems+=("total was '$TOTAL', expected 2")
+          [ "$PASSED" = "1" ]  || problems+=("passed was '$PASSED', expected 1")
+          [ "$FAILED" = "0" ]  || problems+=("failed was '$FAILED', expected 0")
+          # The one that matters: a stub must never be counted as a pass.
+          [ "$SKIPPED" = "1" ] || problems+=("skipped was '$SKIPPED', expected 1 — a stub was miscounted")
+          [ "$JUNIT" = "reports/kerno-junit.xml" ] || problems+=("junit-path was '$JUNIT'")
+          [ -f reports/kerno-junit.xml ] || problems+=("the report was not written to report-path")
+
+          for problem in "${problems[@]:-}"; do
+            [ -n "$problem" ] && echo "::error::$problem"
+          done
+          [ "${#problems[@]}" -eq 0 ]
+
+      - name: Publish the report
+        if: ${{ always() }}
+        uses: mikepenz/action-junit-report@v6
+        with:
+          report_paths: reports/kerno-junit.xml
+          check_name: self-test scenarios
+          detailed_summary: true
+          include_passed: true
+          require_tests: true
+          # The action's own exit code is the gate; do not let the reporter double-fail the job.
+          fail_on_failure: false
+
+      - name: System under test logs on failure
+        if: ${{ failure() }}
+        run: docker logs self-test-sut 2>&1 | tail -60
+
+      - name: Tear down
+        if: ${{ always() }}
+        run: docker rm -f self-test-sut kerno-check-run 2>/dev/null || true
