@@ -1,0 +1,95 @@
+# Cuts a release when an immutable version tag is pushed, and moves the major tag customers pin.
+#
+# The contract customers rely on is `uses: kernoio/kerno-check@v1`: a MOVING tag that always points
+# at the newest v1.x.y. The version tags themselves never move, so anyone who needs a frozen
+# reference can pin `@v1.2.3` or a SHA instead.
+#
+# To release, see RELEASING.md — the image digest in action.yml must be bumped and merged FIRST,
+# because a tag records whatever pin was in the tree at that commit.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+# Least privilege: only the job that moves a tag and cuts a release can write. verify-pin and
+# the called self-test read only, and a reusable workflow inherits the caller's grant unless it
+# declares its own.
+permissions:
+  contents: read
+
+jobs:
+  # A release must not be able to ship a floating image reference. Re-checked here rather than
+  # trusting the pull-request check, because a tag can be pushed to any commit.
+  verify-pin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: The image must be pinned by digest
+        run: python3 .github/scripts/verify_image_pin.py
+
+  # The tagged commit has to work, not just the branch it came from. Without this, a release could
+  # be cut from a commit that never passed anything.
+  self-test:
+    needs: verify-pin
+    uses: ./.github/workflows/self-test.yml
+
+  publish:
+    needs: self-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Move the major tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          major="${TAG%%.*}"
+          if [ "$major" = "$TAG" ] || [ -z "$major" ]; then
+            echo "::error::could not derive a major tag from '$TAG'"
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Force, because this tag is defined as moving. The immutable record is $TAG.
+          git tag -f "$major" "$TAG"^{} -m "$major -> $TAG"
+          git push -f origin "refs/tags/$major"
+          echo "$major now points at $TAG"
+
+      - name: Create the release
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          major="${TAG%%.*}"
+          # grep rather than an inline interpreter: a nested script inside a YAML block scalar has
+          # to stay indented past the block, and getting that wrong silently truncates the step.
+          pin=$(grep -oE 'kernoio/ts-sandbox@sha256:[0-9a-f]{64}' action.yml | head -1)
+          if [ -z "$pin" ]; then
+            echo "::error::could not read the pinned image from action.yml"
+            exit 1
+          fi
+
+          {
+            echo '```yaml'
+            echo "- uses: kernoio/kerno-check@$major"
+            echo "  with:"
+            echo "    sut-url: http://localhost:8080"
+            echo '```'
+            echo
+            echo "Pinned runner image: \`$pin\`"
+            echo
+            echo "\`$major\` now points here. Pin \`$TAG\` instead if you need a reference that never moves."
+          } > notes.md
+
+          gh release create "$TAG" --title "$TAG" --notes-file notes.md

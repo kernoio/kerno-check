@@ -15,13 +15,28 @@ on:
   push:
     branches:
       - main
+  # Callable so the release workflow can prove the TAGGED commit works, not just the branch.
+  workflow_call:
+
+# Declared rather than inherited, so being called from release.yml cannot widen it.
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # Cheap, no Docker: a released version must never carry a floating image reference.
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: The image must be pinned by digest
+        run: python3 .github/scripts/verify_image_pin.py
+
   self-test:
+    needs: validate
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
