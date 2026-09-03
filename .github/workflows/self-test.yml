@@ -111,3 +111,97 @@ jobs:
       - name: Tear down
         if: ${{ always() }}
         run: docker rm -f self-test-sut kerno-check-run 2>/dev/null || true
+
+  # Reporting is opt-in and must never gate the check, so all three behaviours are asserted: the
+  # default sends nothing, an enabled run sends rows a portal could attribute, and an ingest that
+  # is not listening leaves the step green. The ingest is a local recorder — the contract under
+  # test is the request that leaves the runner.
+  report-self-test:
+    needs: validate
+    runs-on: ubuntu-latest
+    env:
+      CAPTURE: /tmp/captured.jsonl
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Start the system under test
+        run: |
+          docker run -d --name report-self-test-sut -p 8080:9876 \
+            kernoio/ts-sandbox@sha256:0f5d2c152dcfd1ad0ceb5dbbf42b6b966de03d3a3d869c4f48f3a3d03eac74d1
+          for _ in $(seq 1 45); do
+            if curl -fsS -o /dev/null http://localhost:8080/; then echo "SUT ready"; exit 0; fi
+            sleep 2
+          done
+          echo "the system under test never became ready" >&2
+          exit 1
+
+      - name: Start the ingest recorder
+        run: |
+          set -euo pipefail
+          : > "$CAPTURE"
+          nohup python3 .github/scripts/recorder.py >/tmp/recorder.log 2>&1 &
+          for _ in $(seq 1 30); do
+            if curl -fsS -o /dev/null -X POST -H 'Content-Type: application/json' \
+                 -d '{}' http://127.0.0.1:9099/warmup; then
+              echo "recorder ready"
+              : > "$CAPTURE"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "the recorder never became ready" >&2
+          cat /tmp/recorder.log >&2
+          exit 1
+
+      # No Kerno inputs at all: the reporting step must not even run.
+      - name: Run the action with reporting off
+        uses: ./
+        with:
+          sut-url: http://localhost:8080
+          app-dir: test-fixture
+          report-path: reports/off.xml
+
+      - name: Assert the default sent nothing
+        run: |
+          set -euo pipefail
+          if [ -s "$CAPTURE" ]; then
+            echo "::error::reporting is opt-in, but the default run sent requests"
+            cat "$CAPTURE" >&2
+            exit 1
+          fi
+          echo "no requests, as expected"
+
+      - name: Run the action with reporting on
+        uses: ./
+        with:
+          sut-url: http://localhost:8080
+          app-dir: test-fixture
+          report-path: reports/on.xml
+          kerno-url: http://127.0.0.1:9099
+          kerno-org: 11111111-1111-1111-1111-111111111111
+          kerno-virtual-key: self-test-key
+
+      - name: Assert the reported rows are attributable
+        run: python3 .github/scripts/assert_reported.py
+
+      # The gate is the scenario result, never our ingest. Nothing is listening on port 9.
+      - name: Assert an unreachable ingest leaves the check green
+        uses: ./
+        with:
+          sut-url: http://localhost:8080
+          app-dir: test-fixture
+          report-path: reports/dead.xml
+          kerno-url: http://127.0.0.1:9
+          kerno-org: 11111111-1111-1111-1111-111111111111
+          kerno-virtual-key: self-test-key
+
+      - name: Recorder log on failure
+        if: ${{ failure() }}
+        run: cat /tmp/recorder.log || true
+
+      - name: Tear down
+        if: ${{ always() }}
+        run: |
+          pkill -f recorder.py 2>/dev/null || true
+          docker rm -f report-self-test-sut kerno-check-run 2>/dev/null || true

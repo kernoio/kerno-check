@@ -53,6 +53,9 @@ connects to a system under test; it never manages one.
 | `image` | no | *(pinned digest)* | The runner image. Pinned by digest so a given version of this action always runs the same code. |
 | `report-path` | no | `kerno-junit.xml` | Where the JUnit XML lands. |
 | `fail-on-failure` | no | `true` | Set `false` to report without gating. |
+| `kerno-url` | no | *(off)* | Base URL of your Kerno events-service. Set with the two below to [report runs to Kerno](#reporting-runs-to-kerno-optional). |
+| `kerno-org` | no | *(off)* | Kerno organization the runs belong to. |
+| `kerno-virtual-key` | no | *(off)* | Kerno virtual key id. Store it as a repository secret. |
 
 ## Outputs
 
@@ -63,6 +66,40 @@ connects to a system under test; it never manages one.
 | `passed` | Scenarios that passed. |
 | `failed` | Scenarios that failed. |
 | `skipped` | Scenarios that never executed. |
+
+## Reporting runs to Kerno (optional)
+
+Off by default. Leave `kerno-url`, `kerno-org` and `kerno-virtual-key` unset and this action makes
+no request to Kerno at all — no account, no key, no egress to us. That is the default because the
+check is useful on its own, and an auth failure has no business in front of your PR gate.
+
+Set all three and each replayed endpoint is reported, so Kerno can show which of your endpoints are
+verified in CI rather than only on someone's laptop:
+
+```yaml
+- uses: kernoio/kerno-check@v1
+  with:
+    sut-url: http://localhost:8080
+    app-dir: services/orders
+    kerno-url: ${{ vars.KERNO_URL }}
+    kerno-org: ${{ vars.KERNO_ORG }}
+    kerno-virtual-key: ${{ secrets.KERNO_VIRTUAL_KEY }}
+```
+
+**Reporting never fails your check.** It runs before the gating step, so it happens whether your
+scenarios passed or failed; every request is bounded; nothing is retried; and the whole phase gives
+up after 20 seconds. A wrong credential, a 500, or an ingest that has gone away costs a line of log
+output and nothing else. Your gate is the scenario result.
+
+It reads the JUnit report the replay already produced, so nothing Kerno-specific runs inside the
+container and your credential never enters it.
+
+Two things are deliberately not reported:
+
+* An endpoint whose scenarios all failed to compile, or never ran. Reporting it would mark the
+  endpoint as covered by a run that exercised nothing.
+* A failure in Kerno's own toolchain — a compile error, an unreachable runner — as though it were a
+  problem with your code.
 
 ## Skipped scenarios
 
