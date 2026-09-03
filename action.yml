@@ -48,7 +48,7 @@ inputs:
   kerno-url:
     description: >-
       Base URL of your Kerno events-service. Set this together with kerno-org and
-      kerno-virtual-key to report each replayed endpoint to Kerno, so the portal can tell a
+      kerno-token to report each replayed endpoint to Kerno, so the portal can tell a
       CI-verified endpoint from one someone ran locally. Leave all three unset — the default — and
       the action makes no request to Kerno at all.
     required: false
@@ -57,9 +57,9 @@ inputs:
     description: Kerno organization the runs belong to. Required to report; see kerno-url.
     required: false
     default: ""
-  kerno-virtual-key:
+  kerno-token:
     description: >-
-      Kerno virtual key id, sent as a header. Required to report; see kerno-url. Store it as a
+      Kerno credential authorising the report. Required to report; see kerno-url. Store it as a
       repository secret. Reporting is never allowed to fail the check, so a wrong or expired
       credential costs a line of log output and nothing else.
     required: false
@@ -169,12 +169,12 @@ runs:
     # Before the gating step below, which fails the action on a scenario failure and would stop
     # the composite before this ran. Reporting is independent of pass or fail.
     - name: Report the run to Kerno
-      if: ${{ inputs.kerno-org != '' || inputs.kerno-virtual-key != '' }}
+      if: ${{ inputs.kerno-org != '' || inputs.kerno-token != '' }}
       shell: bash
       env:
         KERNO_EVENTS_URL: ${{ inputs.kerno-url }}
         KERNO_ORGANIZATION_ID: ${{ inputs.kerno-org }}
-        KERNO_VIRTUAL_KEY_ID: ${{ inputs.kerno-virtual-key }}
+        KERNO_TOKEN: ${{ inputs.kerno-token }}
         KERNO_JUNIT_PATH: ${{ steps.replay.outputs.junit-path }}
         KERNO_APP_DIR: ${{ inputs.app-dir }}
         # GITHUB_SHA is the ephemeral merge commit on pull_request, and a portal link to it

@@ -143,7 +143,7 @@ def group_by_endpoint(cases):
     return groups, unattributed
 
 
-def post(base_url, org_id, virtual_key, path, body, deadline):
+def post(base_url, org_id, token, path, body, deadline):
     """True when the row landed. Never raises.
 
     No retry: the test-run insert has no upsert behind it, so retrying a request that timed out
@@ -158,7 +158,9 @@ def post(base_url, org_id, virtual_key, path, body, deadline):
         data=json.dumps(body).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
-            "x-kerno-virtual-key-id": virtual_key,
+            # The credential reaches the ingest as a virtual key id today. The input is named
+            # generically so this can become a bearer token without a breaking input rename.
+            "x-kerno-virtual-key-id": token,
         },
         method="POST",
     )
@@ -192,11 +194,11 @@ def identity(method, url_path, root, repo, branch):
 
 def main():
     org_id = env("KERNO_ORGANIZATION_ID")
-    virtual_key = env("KERNO_VIRTUAL_KEY_ID")
-    if not org_id and not virtual_key:
+    token = env("KERNO_TOKEN")
+    if not org_id and not token:
         return 0
-    if not org_id or not virtual_key:
-        log("skipped — kerno-org and kerno-virtual-key must both be set")
+    if not org_id or not token:
+        log("skipped — kerno-org and kerno-token must both be set")
         return 0
 
     base_url = env("KERNO_EVENTS_URL")
@@ -292,8 +294,8 @@ def main():
 
         # Test run first: if the budget expires mid-endpoint, lose the ledger row, not the
         # coverage row.
-        ok = post(base_url, org_id, virtual_key, "test-runs", test_run, deadline)
-        ok = post(base_url, org_id, virtual_key, "run-reports", run_report, deadline) and ok
+        ok = post(base_url, org_id, token, "test-runs", test_run, deadline)
+        ok = post(base_url, org_id, token, "run-reports", run_report, deadline) and ok
         if ok:
             reported += 1
 

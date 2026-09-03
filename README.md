@@ -55,7 +55,7 @@ connects to a system under test; it never manages one.
 | `fail-on-failure` | no | `true` | Set `false` to report without gating. |
 | `kerno-url` | no | *(off)* | Base URL of your Kerno events-service. Set with the two below to [report runs to Kerno](#reporting-runs-to-kerno-optional). |
 | `kerno-org` | no | *(off)* | Kerno organization the runs belong to. |
-| `kerno-virtual-key` | no | *(off)* | Kerno virtual key id. Store it as a repository secret. |
+| `kerno-token` | no | *(off)* | Kerno credential authorising the report. Store it as a repository secret. |
 
 ## Outputs
 
@@ -69,7 +69,7 @@ connects to a system under test; it never manages one.
 
 ## Reporting runs to Kerno (optional)
 
-Off by default. Leave `kerno-url`, `kerno-org` and `kerno-virtual-key` unset and this action makes
+Off by default. Leave `kerno-url`, `kerno-org` and `kerno-token` unset and this action makes
 no request to Kerno at all — no account, no key, no egress to us. That is the default because the
 check is useful on its own, and an auth failure has no business in front of your PR gate.
 
@@ -83,7 +83,7 @@ verified in CI rather than only on someone's laptop:
     app-dir: services/orders
     kerno-url: ${{ vars.KERNO_URL }}
     kerno-org: ${{ vars.KERNO_ORG }}
-    kerno-virtual-key: ${{ secrets.KERNO_VIRTUAL_KEY }}
+    kerno-token: ${{ secrets.KERNO_TOKEN }}
 ```
 
 **Reporting never fails your check.** It runs before the gating step, so it happens whether your

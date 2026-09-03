@@ -180,7 +180,7 @@ jobs:
           report-path: reports/on.xml
           kerno-url: http://127.0.0.1:9099
           kerno-org: 11111111-1111-1111-1111-111111111111
-          kerno-virtual-key: self-test-key
+          kerno-token: self-test-key
 
       - name: Assert the reported rows are attributable
         run: python3 .github/scripts/assert_reported.py
@@ -194,7 +194,7 @@ jobs:
           report-path: reports/dead.xml
           kerno-url: http://127.0.0.1:9
           kerno-org: 11111111-1111-1111-1111-111111111111
-          kerno-virtual-key: self-test-key
+          kerno-token: self-test-key
 
       - name: Recorder log on failure
         if: ${{ failure() }}
