@@ -206,7 +206,7 @@ runs:
         fi
 
         if [ "${#missing[@]}" -gt 0 ]; then
-          echo "::error::forward-env names ${#missing[@]} variable(s) with no value: ${missing[*]}. Set them in this step's env:, e.g. FOO: \${{ secrets.FOO }}"
+          echo "::error::forward-env names ${#missing[@]} variable(s) with no value: ${missing[*]}. Set each one in this step's own env:, taking the value from a GitHub secret"
           exit 2
         fi
 

@@ -35,6 +35,11 @@ jobs:
       - name: The image must be pinned by digest
         run: python3 .github/scripts/verify_image_pin.py
 
+      # An unevaluatable expression stops action.yml LOADING, for every consumer — not a failing
+      # test but a dead action. Cheap to check here rather than discovering it in a self-test run.
+      - name: Every action.yml expression must use a context a composite action can read
+        run: python3 .github/scripts/verify_action_expressions.py
+
   self-test:
     needs: validate
     runs-on: ubuntu-latest
