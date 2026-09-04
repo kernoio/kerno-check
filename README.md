@@ -77,6 +77,19 @@ letting a scenario fail deep in a database step while every HTTP assertion aroun
 Each application is replayed against its own URL. Use this instead of `sut-url`; a directory here
 is the one containing `.kerno`, relative to the repository root.
 
+One report is written per application, so `report-path` is a directory in this mode:
+
+```yaml
+        with:
+          apps: |
+            services/orders=http://localhost:8080
+            services/billing=http://localhost:8081
+          report-path: kerno-reports
+```
+
+`mikepenz/action-junit-report` takes a glob, so `report_paths: kerno-reports/*.xml` picks them all
+up. The `total`/`passed`/`failed`/`skipped` outputs are summed across every application.
+
 ## Inputs
 
 | Input | Required | Default | |
@@ -87,7 +100,7 @@ is the one containing `.kerno`, relative to the repository root.
 | `image` | no | *(pinned digest)* | The runner image. Pinned by digest so a given version of this action always runs the same code. |
 | `apps` | no | | One `<dir>=<url>` per line, for a monorepo whose services listen on different ports. Each application is replayed against its own URL. Mutually exclusive with `sut-url` and `app-dir`. |
 | `forward-env` | no | | Environment variable names to pass through to the scenarios, one per line, with values from this step's own `env:`. Only the names listed are forwarded. A name with no value fails the step before the container starts. |
-| `report-path` | no | `kerno-junit.xml` | Where the JUnit XML lands. |
+| `report-path` | no | `kerno-junit.xml` | Where the JUnit XML lands. With `apps` this is a **directory**, since the runner writes one report per application. |
 | `fail-on-failure` | no | `true` | Set `false` to report without gating. |
 
 ## Outputs

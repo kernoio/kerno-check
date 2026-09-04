@@ -50,17 +50,33 @@ def main() -> int:
         print(f"::error::the Kerno runner could not start (exit {replay_exit}) — see the log above")
         return int(replay_exit)
 
-    if not junit_path or not os.path.isfile(junit_path):
+    # One file for a single application; a DIRECTORY of them when `apps` replayed several, since
+    # the driver writes one report per application and refuses to collapse them into one file.
+    if junit_path and os.path.isdir(junit_path):
+        reports = sorted(
+            os.path.join(junit_path, name)
+            for name in os.listdir(junit_path)
+            if name.endswith(".xml")
+        )
+        if not reports:
+            write_outputs(total=0, passed=0, failed=0, skipped=0)
+            print(f"::error::no JUnit reports were written to {junit_path} — see the replay step's log")
+            return EXIT_USAGE
+    elif junit_path and os.path.isfile(junit_path):
+        reports = [junit_path]
+    else:
         write_outputs(total=0, passed=0, failed=0, skipped=0)
         print("::error::no JUnit report was produced — see the replay step's log for the cause")
         return EXIT_USAGE
 
-    try:
-        cases = list(ET.parse(junit_path).getroot().iter("testcase"))
-    except ET.ParseError as error:
-        write_outputs(total=0, passed=0, failed=0, skipped=0)
-        print(f"::error::the JUnit report at {junit_path} is not parseable: {error}")
-        return EXIT_USAGE
+    cases = []
+    for report in reports:
+        try:
+            cases.extend(ET.parse(report).getroot().iter("testcase"))
+        except ET.ParseError as error:
+            write_outputs(total=0, passed=0, failed=0, skipped=0)
+            print(f"::error::the JUnit report at {report} is not parseable: {error}")
+            return EXIT_USAGE
 
     counts = {"passed": 0, "failed": 0, "skipped": 0}
     for case in cases:

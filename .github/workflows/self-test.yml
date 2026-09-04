@@ -157,7 +157,7 @@ jobs:
             test-fixture-second=http://localhost:8081
           forward-env: |
             KERNO_SELF_TEST_TOKEN
-          report-path: reports/multi-junit.xml
+          report-path: reports/multi
         env:
           # A literal rather than a secret: the value is asserted inside the scenario, and a secret
           # would make the assertion unreadable to anyone debugging a failure here.

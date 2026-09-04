@@ -243,6 +243,15 @@ runs:
           url_args=(--sut-base-url="$sut_url")
         fi
 
+        # The driver writes one report per application and refuses --junit for more than one, so
+        # `apps` gets a directory. report-path is then the directory the reports land in; with a
+        # single application it stays exactly what it was, a file.
+        if [ "${#app_args[@]}" -gt 0 ]; then
+          junit_args=(--junit-dir=/out/junit)
+        else
+          junit_args=(--junit=/out/junit.xml)
+        fi
+
         docker run --name kerno-check-run \
           --add-host=host.docker.internal:host-gateway \
           --cap-add=NET_ADMIN \
@@ -252,7 +261,7 @@ runs:
             "${scope_args[@]}" \
             "${app_args[@]+"${app_args[@]}"}" \
             "${url_args[@]+"${url_args[@]}"}" \
-            --junit=/out/junit.xml \
+            "${junit_args[@]}" \
             --summary=/out/summary.md
         replay_exit=$?
         set -e
@@ -266,6 +275,10 @@ runs:
         if [ -f "$report_dir/junit.xml" ]; then
           mkdir -p "$(dirname "$GITHUB_WORKSPACE/$KERNO_REPORT_PATH")"
           cp "$report_dir/junit.xml" "$GITHUB_WORKSPACE/$KERNO_REPORT_PATH"
+          echo "junit-path=$KERNO_REPORT_PATH" >> "$GITHUB_OUTPUT"
+        elif [ -d "$report_dir/junit" ]; then
+          mkdir -p "$GITHUB_WORKSPACE/$KERNO_REPORT_PATH"
+          cp "$report_dir/junit/." "$GITHUB_WORKSPACE/$KERNO_REPORT_PATH" -r
           echo "junit-path=$KERNO_REPORT_PATH" >> "$GITHUB_OUTPUT"
         else
           echo "junit-path=" >> "$GITHUB_OUTPUT"
