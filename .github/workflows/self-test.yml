@@ -35,6 +35,11 @@ jobs:
       - name: The image must be pinned by digest
         run: python3 .github/scripts/verify_image_pin.py
 
+      # An unevaluatable expression stops action.yml LOADING, for every consumer — not a failing
+      # test but a dead action. Cheap to check here rather than discovering it in a self-test run.
+      - name: Every action.yml expression must use a context a composite action can read
+        run: python3 .github/scripts/verify_action_expressions.py
+
   self-test:
     needs: validate
     runs-on: ubuntu-latest
@@ -111,3 +116,104 @@ jobs:
       - name: Tear down
         if: ${{ always() }}
         run: docker rm -f self-test-sut kerno-check-run 2>/dev/null || true
+
+  # Covers the two inputs a single-application, no-configuration fixture cannot reach: per-app SUT
+  # URLs, and forwarding a named variable through to the scenarios. Both are asserted from INSIDE
+  # a scenario (test-fixture-second), because that is the only place that can tell whether the
+  # mapping and the forwarding actually arrived.
+  self-test-multi-app:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Start two systems under test
+        run: |
+          set -euo pipefail
+          docker run -d --name multi-sut-a -p 8080:9876 \
+            kernoio/ts-sandbox@sha256:0f5d2c152dcfd1ad0ceb5dbbf42b6b966de03d3a3d869c4f48f3a3d03eac74d1
+          docker run -d --name multi-sut-b -p 8081:9876 \
+            kernoio/ts-sandbox@sha256:0f5d2c152dcfd1ad0ceb5dbbf42b6b966de03d3a3d869c4f48f3a3d03eac74d1
+          for port in 8080 8081; do
+            ready=false
+            for _ in $(seq 1 45); do
+              if curl -fsS -o /dev/null "http://localhost:$port/"; then ready=true; break; fi
+              sleep 2
+            done
+            if [ "$ready" != true ]; then
+              echo "the system under test on $port never became ready" >&2
+              exit 1
+            fi
+            echo "SUT on $port ready"
+          done
+
+      - name: Run the action across both applications
+        id: kerno
+        uses: ./
+        with:
+          apps: |
+            test-fixture=http://localhost:8080
+            test-fixture-second=http://localhost:8081
+          forward-env: |
+            KERNO_SELF_TEST_TOKEN
+          report-path: reports/multi
+        env:
+          # A literal rather than a secret: the value is asserted inside the scenario, and a secret
+          # would make the assertion unreadable to anyone debugging a failure here.
+          KERNO_SELF_TEST_TOKEN: forwarded-ok
+
+      - name: Assert both applications were replayed against their own URLs
+        if: ${{ always() }}
+        env:
+          TOTAL: ${{ steps.kerno.outputs.total }}
+          PASSED: ${{ steps.kerno.outputs.passed }}
+          FAILED: ${{ steps.kerno.outputs.failed }}
+          SKIPPED: ${{ steps.kerno.outputs.skipped }}
+        run: |
+          set -euo pipefail
+          echo "outputs: total=$TOTAL passed=$PASSED failed=$FAILED skipped=$SKIPPED"
+
+          problems=()
+          # 2 from test-fixture (one pass, one stub) + 1 from test-fixture-second.
+          [ "$TOTAL" = "3" ]   || problems+=("total was '$TOTAL', expected 3 — was one application skipped entirely?")
+          [ "$PASSED" = "2" ]  || problems+=("passed was '$PASSED', expected 2")
+          [ "$FAILED" = "0" ]  || problems+=("failed was '$FAILED', expected 0 — the second app asserts its own URL and the forwarded variable, so a failure here means one of those did not arrive")
+          [ "$SKIPPED" = "1" ] || problems+=("skipped was '$SKIPPED', expected 1 — a stub was miscounted")
+
+          for problem in "${problems[@]:-}"; do
+            [ -n "$problem" ] && echo "::error::$problem"
+          done
+          [ "${#problems[@]}" -eq 0 ]
+
+      # A name listed in forward-env with no value must stop the run BEFORE the container starts.
+      # continue-on-error lets the workflow assert on the failure instead of being killed by it.
+      - name: A forward-env name with no value must be rejected
+        id: missing_env
+        continue-on-error: true
+        uses: ./
+        with:
+          sut-url: http://localhost:8080
+          app-dir: test-fixture
+          forward-env: |
+            KERNO_DELIBERATELY_UNSET
+
+      - name: Assert the missing value was rejected, not silently dropped
+        run: |
+          set -euo pipefail
+          outcome="${{ steps.missing_env.outcome }}"
+          if [ "$outcome" != "failure" ]; then
+            echo "::error::forward-env named an unset variable and the action reported '$outcome' — it must fail, or a scenario needing that value fails somewhere far less obvious"
+            exit 1
+          fi
+          echo "rejected as expected"
+
+      - name: Systems under test logs on failure
+        if: ${{ failure() }}
+        run: |
+          docker logs multi-sut-a 2>&1 | tail -40
+          docker logs multi-sut-b 2>&1 | tail -40
+
+      - name: Tear down
+        if: ${{ always() }}
+        run: docker rm -f multi-sut-a multi-sut-b kerno-check-run 2>/dev/null || true
