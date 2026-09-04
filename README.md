@@ -43,14 +43,50 @@ also why it is fast and free to run.
 It does **not** start your application. You start it in an earlier step and pass `sut-url`. Kerno
 connects to a system under test; it never manages one.
 
+## Scenarios that need configuration
+
+Scenarios that read a database, mint tokens from a shared secret, or call a downstream service
+need values you would never commit. Name them in `forward-env` and supply them from secrets:
+
+```yaml
+      - uses: kernoio/kerno-check@v1
+        with:
+          sut-url: http://localhost:8080
+          forward-env: |
+            DATABASE_URL
+            JWT_SECRET
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+```
+
+Only the names listed are forwarded — the rest of the runner's environment is not. A name listed
+with no value fails the step **before** the container starts, naming the variable, rather than
+letting a scenario fail deep in a database step while every HTTP assertion around it passes.
+
+## A monorepo with services on different ports
+
+```yaml
+      - uses: kernoio/kerno-check@v1
+        with:
+          apps: |
+            services/orders=http://localhost:8080
+            services/billing=http://localhost:8081
+```
+
+Each application is replayed against its own URL. Use this instead of `sut-url`; a directory here
+is the one containing `.kerno`, relative to the repository root.
+
 ## Inputs
 
 | Input | Required | Default | |
 |-------|----------|---------|-|
-| `sut-url` | yes | | Base URL of your running application. A `localhost` URL is rewritten to `host.docker.internal`, since scenarios execute inside a container. |
+| `sut-url` | unless `apps` | | Base URL of your running application. A `localhost` URL is rewritten to `host.docker.internal`, since scenarios execute inside a container. |
 | `app-dir` | no | *(repository root)* | Replay one application's scenarios. Unset discovers every `<app>/.kerno/scenarios` tree — what a monorepo usually wants. All discovered apps are replayed against the same `sut-url`. |
 | `scenarios` | no | *(all)* | Glob filter on the path relative to the scenarios directory, e.g. `endpoints/GET/**`. `*` stays within a segment, `**` crosses them. |
 | `image` | no | *(pinned digest)* | The runner image. Pinned by digest so a given version of this action always runs the same code. |
+| `apps` | no | | One `<dir>=<url>` per line, for a monorepo whose services listen on different ports. Each application is replayed against its own URL. Mutually exclusive with `sut-url` and `app-dir`. |
+| `forward-env` | no | | Environment variable names to pass through to the scenarios, one per line, with values from this step's own `env:`. Only the names listed are forwarded. A name with no value fails the step before the container starts. |
 | `report-path` | no | `kerno-junit.xml` | Where the JUnit XML lands. |
 | `fail-on-failure` | no | `true` | Set `false` to report without gating. |
 

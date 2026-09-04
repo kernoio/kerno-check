@@ -12,8 +12,9 @@ inputs:
       Base URL of your already-running system under test, e.g. http://localhost:8080. Start it in
       an earlier step — this action connects to it and never manages its lifecycle. A localhost or
       127.0.0.1 URL is rewritten to host.docker.internal, because the scenarios execute inside a
-      container and a container's localhost is itself.
-    required: true
+      container and a container's localhost is itself. Required unless `apps` is given.
+    required: false
+    default: ""
   app-dir:
     description: >-
       Directory of the application whose scenarios to replay, relative to the repository root.
@@ -34,6 +35,24 @@ inputs:
       same code; override only to test an unreleased build.
     required: false
     default: kernoio/ts-sandbox@sha256:0f5d2c152dcfd1ad0ceb5dbbf42b6b966de03d3a3d869c4f48f3a3d03eac74d1
+  apps:
+    description: >-
+      Replay several applications, each against its own URL: one `<dir>=<url>` per line, where
+      `<dir>` is the directory containing `.kerno` relative to the repository root. Use this
+      instead of sut-url when a monorepo's services listen on different ports. Mutually exclusive
+      with sut-url and app-dir.
+    required: false
+    default: ""
+  forward-env:
+    description: >-
+      Environment variable names to pass through to the scenarios, one per line. Values are read
+      from this step's own `env:`, so secrets come from GitHub Secrets and never enter the
+      repository. Only the names listed here are forwarded; the rest of the runner's environment
+      is not. A name listed here with no value fails the step before the container starts, naming
+      the variable — rather than letting a scenario fail deep in a database step while every HTTP
+      assertion around it still passes.
+    required: false
+    default: ""
   report-path:
     description: JUnit XML report destination, relative to the workspace.
     required: false
@@ -75,19 +94,121 @@ runs:
         KERNO_SCENARIOS: ${{ inputs.scenarios }}
         KERNO_IMAGE: ${{ inputs.image }}
         KERNO_REPORT_PATH: ${{ inputs.report-path }}
+        KERNO_APPS: ${{ inputs.apps }}
+        KERNO_FORWARD_ENV: ${{ inputs.forward-env }}
       run: |
         set -euo pipefail
+
+        # Exactly one way of naming the SUT. Silently preferring one over the other would make a
+        # workflow that sets both look like it works while half its configuration is ignored.
+        if [ -n "$KERNO_APPS" ] && [ -n "$KERNO_SUT_URL" ]; then
+          echo "::error::set either sut-url or apps, not both — apps carries a URL per application"
+          exit 2
+        fi
+        if [ -n "$KERNO_APPS" ] && [ -n "$KERNO_APP_DIR" ]; then
+          echo "::error::app-dir replays one application; apps replays several. Set one or the other"
+          exit 2
+        fi
+        if [ -z "$KERNO_APPS" ] && [ -z "$KERNO_SUT_URL" ]; then
+          echo "::error::sut-url is required (or use apps to give each application its own URL)"
+          exit 2
+        fi
 
         # A container's localhost is the container. Customers overwhelmingly run their SUT on the
         # runner itself, so rewrite it rather than making every first attempt fail on a connection
         # error that gives no hint why.
+        rewrite_localhost() {
+          printf '%s' "$1" | sed -e 's|//localhost|//host.docker.internal|' -e 's|//127\.0\.0\.1|//host.docker.internal|'
+        }
+
         sut_url="$KERNO_SUT_URL"
         case "$sut_url" in
           *//localhost*|*//127.0.0.1*)
-            sut_url=$(printf '%s' "$sut_url" | sed -e 's|//localhost|//host.docker.internal|' -e 's|//127\.0\.0\.1|//host.docker.internal|')
+            sut_url=$(rewrite_localhost "$sut_url")
             echo "sut-url points at the runner; using $sut_url from inside the container"
             ;;
         esac
+
+        # One --app=<dir>=<url> per line. The driver already supports per-application URLs; this
+        # is only the input surface for it.
+        trim() {
+          local v="$1"
+          v="${v#"${v%%[![:space:]]*}"}"
+          printf '%s' "${v%"${v##*[![:space:]]}"}"
+        }
+
+        app_args=()
+        while IFS= read -r line; do
+          line="${line%%$'\r'}"
+          [ -z "${line// }" ] && continue
+          dir="${line%%=*}"
+          url="${line#*=}"
+          dir="$(trim "$dir")"
+          url="$(trim "$url")"
+          if [ -z "$dir" ] || [ -z "$url" ] || [ "$dir" = "$line" ]; then
+            echo "::error::apps expects one <dir>=<url> per line, got: $line"
+            exit 2
+          fi
+          if [ ! -d "$GITHUB_WORKSPACE/${dir%/}/.kerno/scenarios" ]; then
+            echo "::error::no scenarios at ${dir%/}/.kerno/scenarios — check the apps input"
+            exit 2
+          fi
+          app_args+=(--app="${dir%/}=$(rewrite_localhost "$url")")
+        done <<< "$KERNO_APPS"
+
+        # Only the names asked for, and every one of them must have a value. A name with no value
+        # is the silent-partial-pass case: the scenarios run, the HTTP assertions pass, and the one
+        # that needed a database fails somewhere unhelpful. Fail here instead, naming all of them.
+        env_args=()
+        missing=()
+        invalid=()
+        reserved=()
+        while IFS= read -r name; do
+          name="${name%%$'\r'}"
+          name="$(trim "$name")"
+          [ -z "$name" ] && continue
+
+          # Checked before the indirect expansion below: `${!name}` on something that is not a
+          # valid identifier aborts with a raw bash "invalid variable name" and no hint of which
+          # input caused it, which is the opposite of what this input is for.
+          case "$name" in
+            [A-Za-z_]*) ;;
+            *) invalid+=("$name"); continue ;;
+          esac
+          if [ -n "$(printf '%s' "$name" | tr -d 'A-Za-z0-9_')" ]; then
+            invalid+=("$name")
+            continue
+          fi
+
+          # Overwriting these breaks the runner container rather than configuring the tests, and
+          # the resulting failure looks like a Kerno bug.
+          case "$name" in
+            PATH|HOME|NODE_OPTIONS|LD_PRELOAD|LD_LIBRARY_PATH)
+              reserved+=("$name")
+              continue
+              ;;
+          esac
+
+          if [ -z "${!name+x}" ] || [ -z "${!name}" ]; then
+            missing+=("$name")
+            continue
+          fi
+          env_args+=(-e "$name=${!name}")
+        done <<< "$KERNO_FORWARD_ENV"
+
+        if [ "${#invalid[@]}" -gt 0 ]; then
+          echo "::error::forward-env is a list of variable NAMES, one per line; these are not valid names: ${invalid[*]}"
+          exit 2
+        fi
+        if [ "${#reserved[@]}" -gt 0 ]; then
+          echo "::error::forward-env cannot override the runner's own environment: ${reserved[*]}. Give your tests a differently named variable"
+          exit 2
+        fi
+
+        if [ "${#missing[@]}" -gt 0 ]; then
+          echo "::error::forward-env names ${#missing[@]} variable(s) with no value: ${missing[*]}. Set them in this step's env:, e.g. FOO: \${{ secrets.FOO }}"
+          exit 2
+        fi
 
         # Scenarios live in the checked-out repository, mounted read-only. One directory when
         # app-dir is given, otherwise discover every .kerno/scenarios tree beneath the root.
@@ -114,13 +235,23 @@ runs:
         docker rm -f kerno-check-run >/dev/null 2>&1 || true
 
         set +e
+        # --sut-base-url is omitted entirely when apps carries the URLs: the driver rejects an
+        # --app mapping combined with a blank base URL, and passing an empty string would look
+        # like a configured-but-empty URL rather than "not set".
+        url_args=()
+        if [ -n "$sut_url" ]; then
+          url_args=(--sut-base-url="$sut_url")
+        fi
+
         docker run --name kerno-check-run \
           --add-host=host.docker.internal:host-gateway \
           --cap-add=NET_ADMIN \
+          "${env_args[@]+"${env_args[@]}"}" \
           -v "$GITHUB_WORKSPACE:/workspace:ro" \
           "$KERNO_IMAGE" replay \
             "${scope_args[@]}" \
-            --sut-base-url="$sut_url" \
+            "${app_args[@]+"${app_args[@]}"}" \
+            "${url_args[@]+"${url_args[@]}"}" \
             --junit=/out/junit.xml \
             --summary=/out/summary.md
         replay_exit=$?
