@@ -28,8 +28,8 @@ jobs:
           report_paths: kerno-junit.xml
 ```
 
-No Kerno account, no API key, no agent. The action pulls one public image and runs the scenarios
-already committed to your repository.
+No Kerno account, no API key, no agent — unless you opt in to portal links below. The action
+pulls one public image and runs the scenarios already committed to your repository.
 
 ## What it does, and what it does not
 
@@ -42,6 +42,34 @@ also why it is fast and free to run.
 
 It does **not** start your application. You start it in an earlier step and pass `sut-url`. Kerno
 connects to a system under test; it never manages one.
+
+## Portal links
+
+Unset, this action still needs no account. When you pass `api-key` and `organization-id` together,
+it opens one portal run per endpoint after replay and prints the URL — in the job log, the step
+summary, and the `portal-run-urls` output:
+
+```yaml
+      - uses: kernoio/kerno-check@v1
+        with:
+          sut-url: http://localhost:8080
+          api-key: ${{ secrets.KERNO_API_KEY }}
+          organization-id: ${{ vars.KERNO_ORGANIZATION_ID }}
+```
+
+The page is the same `/runs/{id}` a generate or validate run opens. Replay does not ship request
+and response bodies, so the row has the verdicts and not the HTTP diffs — those still come from a
+run on a developer's machine.
+
+A down events-service does not fail the check. One of the two inputs without the other is a
+configuration error (exit 2), named before anything is published.
+
+Defaults point at production. For the development portal:
+
+```yaml
+          events-url: https://events.dev.kerno.io/events-service/
+          portal-url: https://portal.dev.kerno.io
+```
 
 ## Scenarios that need configuration
 
@@ -102,6 +130,10 @@ up. The `total`/`passed`/`failed`/`skipped` outputs are summed across every appl
 | `forward-env` | no | | Environment variable names to pass through to the scenarios, one per line, with values from this step's own `env:`. Only the names listed are forwarded. A name with no value fails the step before the container starts. |
 | `report-path` | no | `kerno-junit.xml` | Where the JUnit XML lands. With `apps` this is a **directory**, since the runner writes one report per application. |
 | `fail-on-failure` | no | `true` | Set `false` to report without gating. |
+| `api-key` | no | | Virtual key id. Together with `organization-id`, opens a portal run per endpoint and prints the URL. Leave both unset for the no-account path. |
+| `organization-id` | no | | Organization the portal runs belong to. Must be set with `api-key`. |
+| `events-url` | no | *(production)* | Events-service base URL. Override for development. |
+| `portal-url` | no | *(production)* | Portal base URL used to build the printed links. Override for development. |
 
 ## Outputs
 
@@ -112,6 +144,7 @@ up. The `total`/`passed`/`failed`/`skipped` outputs are summed across every appl
 | `passed` | Scenarios that passed. |
 | `failed` | Scenarios that failed. |
 | `skipped` | Scenarios that never executed. |
+| `portal-run-urls` | Portal run URLs, one per endpoint, separated by newlines. Empty when `api-key` was not set, or when opening a run failed. |
 
 ## Skipped scenarios
 
