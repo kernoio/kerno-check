@@ -1,7 +1,7 @@
 """PR comment and job-summary table for a replay: totals, then one row per portal run.
 
-Without portal URLs the comment is only the totals — a suite of 187 passing scenarios must not
-become a 187-row table. The JUnit reporter can still create a check; this is the comment.
+Without portal URLs the comment is only the totals — a large passing suite must not become a
+row per scenario. The JUnit reporter can still create a check; this is the comment.
 """
 
 from __future__ import annotations

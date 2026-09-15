@@ -34,7 +34,7 @@ jobs:
           comment: false
 ```
 
-No Kerno account, no API key, no agent — unless you opt in to portal links below. The action
+No Kerno account, no API key, no agent — unless you opt in to portal links. The action
 pulls one public image and runs the scenarios already committed to your repository.
 
 ## What it does, and what it does not
@@ -49,39 +49,142 @@ also why it is fast and free to run.
 It does **not** start your application. You start it in an earlier step and pass `sut-url`. Kerno
 connects to a system under test; it never manages one.
 
-## Portal links
+## Reporting on the pull request
 
-Unset, this action still needs no account. When you pass `api-key` and `organization-id` together,
-it opens one portal run per endpoint after replay and prints the URL — in the job log, the step
-summary, a pull-request comment, and the `portal-run-urls` output. The comment is totals plus one
-row per endpoint (pass/fail and the report link). Without portal URLs it is only the totals — it
-does not list every scenario. Turn `comment: false` on `action-junit-report` so that reporter
-does not also dump every scenario onto the PR.
+Three surfaces:
 
-The workflow needs `pull-requests: write` for the comment to land (a missing permission is a
-warning, not a failed check).
+| Surface | Who writes it | What it is for |
+|---------|----------------|----------------|
+| **PR comment** | this action | Totals, then one row per portal run (pass/fail and a report link). Totals only when there are no portal URLs. Never a row per scenario. |
+| **Checks tab** | `mikepenz/action-junit-report` | Per-scenario detail (expected vs actual, the failing assertion). |
+| **Job summary / log** | this action | The same table as the comment, plus the raw runner output. |
+
+The comment is the thing people read on the PR. Keep the JUnit reporter for the Checks tab, and
+turn its own comment **off** — otherwise it dumps every scenario onto the PR and buries the table.
 
 ```yaml
-      - uses: kernoio/kerno-check@v1
-        with:
-          sut-url: http://localhost:8080
-          api-key: ${{ secrets.KERNO_API_KEY }}
-          organization-id: ${{ vars.KERNO_ORGANIZATION_ID }}
+          comment: false
 ```
 
-The page is the same `/runs/{id}` a generate or validate run opens. Replay does not ship request
-and response bodies, so the row has the verdicts and not the HTTP diffs — those still come from a
-run on a developer's machine.
+### Permissions
 
-A down events-service does not fail the check. One of the two inputs without the other is a
-configuration error (exit 2), named before anything is published.
+```yaml
+permissions:
+  contents: read
+  checks: write          # the JUnit reporter creates a check run
+  pull-requests: write   # this action comments the table
+```
 
-Defaults point at production. For the development portal:
+A missing `pull-requests: write` is a warning, not a failed check: replay still gates the PR, the
+comment just does not land.
+
+### Secrets and variables
+
+Create these on the repository (Settings → Secrets and variables → Actions):
+
+| Name | Kind | |
+|------|------|-|
+| `KERNO_API_KEY` | **secret** | A virtual key id. Opens the portal runs. |
+| `KERNO_ORGANIZATION_ID` | **variable** | The organization those runs belong to. Not a secret. |
+
+Both must be set together, or neither. One without the other is a configuration error (exit 2)
+before anything is published. Leave both unset for the no-account path: replay still runs, the
+comment is only the totals, and nothing calls home.
+
+### What the comment looks like
+
+With portal credentials:
+
+```markdown
+**Kerno check:** 12 passed, 1 failed, 0 skipped (13 total)
+
+| Endpoint | Passed | Failed | Report |
+| --- | ---: | ---: | --- |
+| `services/orders · GET /health` | 2 | 0 | [open](https://portal.kerno.io/runs/…?org=…) |
+| `services/orders · POST /orders` | 4 | 1 | [open](https://portal.kerno.io/runs/…?org=…) |
+| `services/billing · GET /invoices` | 6 | 0 | [open](https://portal.kerno.io/runs/…?org=…) |
+```
+
+Without credentials, or if opening a run failed, the table is omitted and only the totals line
+remains. The action upserts one comment (it does not stack a new one on every push).
+
+The linked page is the same `/runs/{id}` a generate or validate run opens. Replay does not ship
+request and response bodies, so the row has the verdicts and not the HTTP diffs — those still
+come from a run on a developer's machine.
+
+### A complete workflow
+
+Start the application, wait until it answers, replay, comment the table, publish the Checks
+report. This is the shape a monorepo with more than one service usually wants:
+
+```yaml
+name: kerno
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kerno:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - run: docker compose up -d --wait
+      - run: ./scripts/wait-for-ready.sh
+
+      - uses: kernoio/kerno-check@v1
+        with:
+          apps: |
+            services/orders=http://localhost:8080
+            services/billing=http://localhost:8081
+          forward-env: |
+            DATABASE_URL
+            JWT_SECRET
+          report-path: kerno-reports
+          api-key: ${{ secrets.KERNO_API_KEY }}
+          organization-id: ${{ vars.KERNO_ORGANIZATION_ID }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+
+      - uses: mikepenz/action-junit-report@v6
+        if: always()
+        with:
+          report_paths: kerno-reports/*.xml
+          check_name: Kerno scenarios
+          comment: false
+          detailed_summary: true
+          include_passed: true
+          fail_on_failure: false
+```
+
+`if: always()` keeps the Checks report when replay fails. `fail_on_failure: false` stops the
+reporter from failing the job a second time — this action's exit code is already the gate.
+
+A single application is the same workflow with `sut-url` instead of `apps`, and `report_paths:
+kerno-junit.xml`.
+
+### Portal hosts
+
+Defaults point at production. Override both together for the development portal:
 
 ```yaml
           events-url: https://events.dev.kerno.io/events-service/
           portal-url: https://portal.dev.kerno.io
 ```
+
+A down events-service does not fail the check. The comment then falls back to totals only.
 
 ## Scenarios that need configuration
 
