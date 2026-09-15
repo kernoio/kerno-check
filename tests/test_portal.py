@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import unittest
-import xml.etree.ElementTree as ET
+from pathlib import Path
 from unittest.mock import patch
 
 from portal import (
     DEFAULT_EVENTS_URL,
     DEFAULT_PORTAL_URL,
-    ReplayCase,
     VIRTUAL_KEY_HEADER,
     group_by_endpoint,
+    load_capture,
     load_portal_config,
     parse_endpoint,
     portal_run_url,
@@ -19,17 +20,41 @@ from portal import (
 )
 
 
-def case(classname: str, name: str, status: str = "passed") -> ET.Element:
-    element = ET.Element("testcase", {"classname": classname, "name": name})
-    if status == "failed":
-        ET.SubElement(element, "failure", {"message": "body differed"})
-    elif status == "skipped":
-        ET.SubElement(element, "skipped", {"message": "blocked: needs payment-service"})
-    return element
-
-
-def replay(classname: str, name: str, status: str = "passed", content_root: str = "app") -> ReplayCase:
-    return ReplayCase(content_root=content_root, element=case(classname, name, status))
+def scenario(
+    *,
+    name: str,
+    endpoint: str,
+    status: str = "passed",
+    content_root: str = "app",
+    row: dict | None = None,
+) -> dict:
+    payload = {
+        "contentRoot": content_root,
+        "endpoint": endpoint,
+        "status": status,
+        "row": row
+        if row is not None
+        else {
+            "scenarioId": name,
+            "scenario": name,
+            "verdict": "passed" if status == "passed" else ("not_implemented" if status == "skipped" else "failed"),
+            "state": "unchanged"
+            if status == "passed"
+            else ("not_implemented" if status == "skipped" else "diff_detected"),
+            "hasErrors": status == "failed",
+            "requestHeaders": {"content-type": "application/json"},
+            "responseHeaders": {"content-type": "application/json"},
+            "requestBody": '{"ok":true}',
+            "responseBody": '{"id":1}',
+            "responseStatus": 200,
+            "stepsValidation": [],
+        },
+    }
+    if status == "skipped":
+        payload["row"].pop("responseStatus", None)
+        payload["row"]["requestBody"] = ""
+        payload["row"]["responseBody"] = ""
+    return payload
 
 
 class ParseEndpointTest(unittest.TestCase):
@@ -47,9 +72,9 @@ class GroupByEndpointTest(unittest.TestCase):
     def test_groups_scenarios_of_the_same_endpoint(self) -> None:
         grouped = group_by_endpoint(
             [
-                replay("GET /health", "ok"),
-                replay("GET /health", "missing"),
-                replay("POST /orders", "create"),
+                scenario(name="ok", endpoint="GET /health"),
+                scenario(name="missing", endpoint="GET /health"),
+                scenario(name="create", endpoint="POST /orders"),
             ]
         )
         self.assertEqual(set(grouped), {("app", "GET", "/health"), ("app", "POST", "/orders")})
@@ -58,11 +83,29 @@ class GroupByEndpointTest(unittest.TestCase):
     def test_the_same_path_in_two_apps_is_two_runs(self) -> None:
         grouped = group_by_endpoint(
             [
-                replay("GET /health", "ok", content_root="orders"),
-                replay("GET /health", "ok", content_root="billing"),
+                scenario(name="ok", endpoint="GET /health", content_root="orders"),
+                scenario(name="ok", endpoint="GET /health", content_root="billing"),
             ]
         )
         self.assertEqual(set(grouped), {("orders", "GET", "/health"), ("billing", "GET", "/health")})
+
+
+class LoadCaptureTest(unittest.TestCase):
+    def test_missing_path_is_none(self) -> None:
+        self.assertIsNone(load_capture(""))
+        self.assertIsNone(load_capture("/no/such/file.json"))
+
+    def test_reads_the_runner_document(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "run-report.json"
+            path.write_text(
+                json.dumps({"version": 1, "scenarios": [scenario(name="ok", endpoint="GET /")]}),
+                encoding="utf-8",
+            )
+            loaded = load_capture(str(path))
+        assert loaded is not None
+        self.assertEqual(len(loaded), 1)
+        self.assertEqual(loaded[0]["row"]["responseStatus"], 200)
 
 
 class LoadPortalConfigTest(unittest.TestCase):
@@ -123,7 +166,7 @@ class PortalRunUrlTest(unittest.TestCase):
 
 
 class PublishRunsTest(unittest.TestCase):
-    def test_opens_one_run_per_endpoint_and_finishes_from_junit(self) -> None:
+    def test_opens_one_run_per_endpoint_and_finishes_from_the_capture(self) -> None:
         posts: list[tuple[str, dict[str, str], bytes]] = []
         patches: list[tuple[str, dict[str, str], bytes]] = []
 
@@ -151,12 +194,11 @@ class PublishRunsTest(unittest.TestCase):
             config = load_portal_config()
         assert config is not None
 
+        ok = scenario(name="ok", endpoint="GET /health")
+        stub = scenario(name="stub", endpoint="GET /health", status="skipped")
+        create = scenario(name="create", endpoint="POST /orders", status="failed")
         runs = publish_runs(
-            [
-                replay("GET /health", "ok"),
-                replay("GET /health", "stub", "skipped"),
-                replay("POST /orders", "create", "failed"),
-            ],
+            [ok, stub, create],
             config,
             http_post=http_post,
             http_patch=http_patch,
@@ -186,11 +228,35 @@ class PublishRunsTest(unittest.TestCase):
             {row["scenarioId"]: row["state"] for row in finish_health["report"]["scenarios"]},
             {"ok": "unchanged", "stub": "not_implemented"},
         )
+        passed_row = finish_health["report"]["scenarios"][0]
+        self.assertEqual(passed_row["responseStatus"], 200)
+        self.assertEqual(passed_row["requestBody"], '{"ok":true}')
+        self.assertEqual(passed_row["responseBody"], '{"id":1}')
+        self.assertNotIn("responseStatus", finish_health["report"]["scenarios"][1])
         finish_orders = json.loads(patches[1][2])
         self.assertEqual(finish_orders["outcome"], "diffs_rejected")
         self.assertEqual(finish_orders["diffsDetected"], 1)
         self.assertEqual(finish_orders["report"]["scenarios"][0]["state"], "diff_detected")
+        self.assertEqual(finish_orders["report"]["scenarios"][0]["responseStatus"], 200)
         self.assertTrue(patches[0][0].endswith("/organizations/org-1/run-reports/run-1"))
+
+    def test_does_not_invent_rows_when_the_capture_has_none(self) -> None:
+        def http_post(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
+            raise AssertionError("must not open a run without a capture row")
+
+        with patch.dict(
+            os.environ,
+            {"KERNO_API_KEY": "vk-1", "KERNO_ORGANIZATION_ID": "org-1"},
+            clear=True,
+        ):
+            config = load_portal_config()
+        assert config is not None
+        runs = publish_runs(
+            [{"contentRoot": "app", "endpoint": "GET /health", "status": "passed"}],
+            config,
+            http_post=http_post,
+        )
+        self.assertEqual(runs, [])
 
     def test_a_down_events_service_does_not_raise(self) -> None:
         def http_post(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
@@ -204,7 +270,7 @@ class PublishRunsTest(unittest.TestCase):
             config = load_portal_config()
         assert config is not None
         runs = publish_runs(
-            [replay("GET /health", "ok")],
+            [scenario(name="ok", endpoint="GET /health")],
             config,
             http_post=http_post,
         )
@@ -222,7 +288,7 @@ class PublishRunsTest(unittest.TestCase):
             config = load_portal_config()
         assert config is not None
         runs = publish_runs(
-            [replay("GET /health", "ok")],
+            [scenario(name="ok", endpoint="GET /health")],
             config,
             http_post=http_post,
         )

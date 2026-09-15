@@ -313,6 +313,19 @@ runs:
           echo "junit-path=" >> "$GITHUB_OUTPUT"
         fi
 
+        # The portal payload is the runner's HTTP capture, written next to JUnit. Copied to a
+        # stable workspace path so the report step does not have to guess which of those two
+        # layouts the replay used.
+        capture=""
+        if [ -f "$report_dir/run-report.json" ]; then
+          capture="$GITHUB_WORKSPACE/kerno-run-report.json"
+          cp "$report_dir/run-report.json" "$capture"
+        elif [ -f "$report_dir/junit/run-report.json" ]; then
+          capture="$GITHUB_WORKSPACE/kerno-run-report.json"
+          cp "$report_dir/junit/run-report.json" "$capture"
+        fi
+        echo "capture-path=$capture" >> "$GITHUB_OUTPUT"
+
         # The container cannot write to $GITHUB_STEP_SUMMARY — that path belongs to the runner.
         if [ -f "$report_dir/summary.md" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
           cat "$report_dir/summary.md" >> "$GITHUB_STEP_SUMMARY"
@@ -325,13 +338,13 @@ runs:
       shell: bash
       env:
         KERNO_JUNIT_PATH: ${{ steps.replay.outputs.junit-path }}
+        KERNO_CAPTURE_PATH: ${{ steps.replay.outputs.capture-path }}
         KERNO_REPLAY_EXIT: ${{ steps.replay.outputs.replay-exit }}
         KERNO_FAIL_ON_FAILURE: ${{ inputs.fail-on-failure }}
         KERNO_API_KEY: ${{ inputs.api-key }}
         KERNO_ORGANIZATION_ID: ${{ inputs.organization-id }}
         KERNO_EVENTS_URL: ${{ inputs.events-url }}
         KERNO_PORTAL_URL: ${{ inputs.portal-url }}
-        KERNO_CONTENT_ROOT: ${{ inputs.app-dir }}
         GITHUB_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail

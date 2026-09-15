@@ -1,5 +1,9 @@
 """Open one portal run report per endpoint after replay, and return the URLs.
 
+The payload is the runner's capture (`run-report.json`), not a reconstruction from JUnit.
+JUnit is the CI gate; it cannot carry request/response fields, so inventing rows from it
+would publish empty HTTP and a status of 0.
+
 Best-effort: a down events-service must not fail the check. Unset credentials skip this
 entirely, which is the no-account path the action advertises.
 """
@@ -14,7 +18,6 @@ from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
-from xml.etree.ElementTree import Element
 
 DEFAULT_EVENTS_URL = "https://events.kerno.io/events-service/"
 DEFAULT_PORTAL_URL = "https://portal.kerno.io"
@@ -32,12 +35,6 @@ class PortalConfig:
     git_repo: str
     git_branch: str
     commit_sha: str
-
-
-@dataclass(frozen=True)
-class ReplayCase:
-    content_root: str
-    element: Element
 
 
 @dataclass(frozen=True)
@@ -75,6 +72,20 @@ def load_portal_config() -> PortalConfig | None:
     )
 
 
+def load_capture(path: str) -> list[dict[str, Any]] | None:
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return None
+    scenarios = payload.get("scenarios") if isinstance(payload, dict) else None
+    if not isinstance(scenarios, list):
+        return None
+    return [scenario for scenario in scenarios if isinstance(scenario, dict)]
+
+
 def parse_endpoint(classname: str) -> tuple[str, str] | None:
     label = classname.strip()
     if not label:
@@ -85,14 +96,14 @@ def parse_endpoint(classname: str) -> tuple[str, str] | None:
     return method, (path.strip() or "/")
 
 
-def group_by_endpoint(cases: list[ReplayCase]) -> dict[tuple[str, str, str], list[Element]]:
-    grouped: dict[tuple[str, str, str], list[Element]] = defaultdict(list)
-    for case in cases:
-        parsed = parse_endpoint(case.element.get("classname", ""))
+def group_by_endpoint(scenarios: list[dict[str, Any]]) -> dict[tuple[str, str, str], list[dict[str, Any]]]:
+    grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    for scenario in scenarios:
+        parsed = parse_endpoint(str(scenario.get("endpoint") or ""))
         if parsed is None:
             continue
         method, path = parsed
-        grouped[(case.content_root, method, path)].append(case.element)
+        grouped[(str(scenario.get("contentRoot") or ""), method, path)].append(scenario)
     return grouped
 
 
@@ -124,47 +135,33 @@ def _json_headers(api_key: str) -> dict[str, str]:
     }
 
 
-def _case_status(case: Element) -> str:
-    if case.find("failure") is not None:
-        return "failed"
-    if case.find("skipped") is not None:
-        return "skipped"
-    return "passed"
+def _counts(group: list[dict[str, Any]]) -> tuple[int, int, int, int]:
+    passed = failed = skipped = diffs = 0
+    for scenario in group:
+        status = scenario.get("status")
+        if status == "failed":
+            failed += 1
+        elif status == "skipped":
+            skipped += 1
+        else:
+            passed += 1
+        row = scenario.get("row")
+        if isinstance(row, dict) and row.get("state") == "diff_detected":
+            diffs += 1
+    return passed, failed, skipped, diffs
 
 
-def _scenario_row(case: Element) -> dict[str, Any]:
-    status = _case_status(case)
-    name = case.get("name") or "unknown"
-    if status == "failed":
-        return {
-            "scenarioId": name,
-            "state": "diff_detected",
-            "scenario": name,
-            "verdict": "failed",
-            "hasErrors": True,
-            "responseStatus": 0,
-        }
-    if status == "skipped":
-        return {
-            "scenarioId": name,
-            "state": "not_implemented",
-            "scenario": name,
-            "verdict": "not_implemented",
-            "hasErrors": False,
-            "responseStatus": 0,
-        }
-    return {
-        "scenarioId": name,
-        "state": "unchanged",
-        "scenario": name,
-        "verdict": "passed",
-        "hasErrors": False,
-        "responseStatus": 0,
-    }
+def _rows(group: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for scenario in group:
+        row = scenario.get("row")
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
 
 
 def publish_runs(
-    cases: list[ReplayCase],
+    scenarios: list[dict[str, Any]],
     config: PortalConfig,
     *,
     http_post: HttpCall = default_http,
@@ -172,7 +169,10 @@ def publish_runs(
 ) -> list[PortalRun]:
     events_base = config.events_url.rstrip("/")
     published: list[PortalRun] = []
-    for (content_root, method, path), group in sorted(group_by_endpoint(cases).items()):
+    for (content_root, method, path), group in sorted(group_by_endpoint(scenarios).items()):
+        rows = _rows(group)
+        if not rows:
+            continue
         endpoint = f"{method} {path}"
         start_body = json.dumps(
             {
@@ -202,18 +202,17 @@ def publish_runs(
             print(f"::warning::events-service opened {endpoint} without an id")
             continue
 
-        statuses = [_case_status(case) for case in group]
-        failed = sum(1 for status in statuses if status == "failed")
+        passed, failed, skipped, diffs = _counts(group)
         finish_body = json.dumps(
             {
                 "status": "completed",
-                "outcome": "diffs_rejected" if failed else "no_diffs",
-                "totalScenarios": len(group),
-                "diffsDetected": failed,
+                "outcome": "diffs_rejected" if diffs else "no_diffs",
+                "totalScenarios": len(rows),
+                "diffsDetected": diffs,
                 "scenariosAdded": 0,
                 "scenariosUpdated": 0,
                 "scenariosRemoved": 0,
-                "report": {"scenarios": [_scenario_row(case) for case in group]},
+                "report": {"scenarios": rows},
             }
         ).encode("utf-8")
         finish_url = (
@@ -236,9 +235,9 @@ def publish_runs(
             PortalRun(
                 endpoint=endpoint,
                 content_root=content_root,
-                passed=sum(1 for status in statuses if status == "passed"),
+                passed=passed,
                 failed=failed,
-                skipped=sum(1 for status in statuses if status == "skipped"),
+                skipped=skipped,
                 run_report_id=str(run_report_id),
                 portal_run_url=portal_run_url(
                     config.portal_url,

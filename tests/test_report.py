@@ -81,9 +81,17 @@ class ReportPortalTest(unittest.TestCase):
                 "GITHUB_OUTPUT": str(github_output),
                 "GITHUB_STEP_SUMMARY": str(step_summary),
             }
-            def fake_publish(cases, config, **kwargs):  # type: ignore[no-untyped-def]
+            capture = Path(tmp) / "run-report.json"
+            capture.write_text(
+                '{"version":1,"scenarios":[{"contentRoot":"test-fixture","endpoint":"GET /","status":"passed","row":{"scenarioId":"ok"}}]}',
+                encoding="utf-8",
+            )
+            env["KERNO_CAPTURE_PATH"] = str(capture)
+
+            def fake_publish(scenarios, config, **kwargs):  # type: ignore[no-untyped-def]
                 from portal import PortalRun
 
+                self.assertEqual(scenarios[0]["row"]["scenarioId"], "ok")
                 return [
                     PortalRun(
                         endpoint="GET /",
@@ -119,6 +127,24 @@ class ReportPortalTest(unittest.TestCase):
             }
             with patch.dict(os.environ, env, clear=True):
                 self.assertEqual(report.main(), 1)
+
+    def test_credentials_without_a_capture_do_not_invent_a_portal_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            junit = Path(tmp) / "junit.xml"
+            junit.write_text(JUNIT, encoding="utf-8")
+            github_output = Path(tmp) / "output"
+            env = {
+                "KERNO_JUNIT_PATH": str(junit),
+                "KERNO_REPLAY_EXIT": "0",
+                "KERNO_API_KEY": "vk-1",
+                "KERNO_ORGANIZATION_ID": "org-1",
+                "GITHUB_OUTPUT": str(github_output),
+            }
+            with patch.dict(os.environ, env, clear=True), patch(
+                "report.publish_runs", side_effect=AssertionError("must not reconstruct from JUnit")
+            ):
+                self.assertEqual(report.main(), 0)
+            self.assertIn("portal-run-urls=\n", github_output.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
