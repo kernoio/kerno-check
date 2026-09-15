@@ -21,7 +21,6 @@ on:
 # Declared rather than inherited, so being called from release.yml cannot widen it.
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
