@@ -40,6 +40,9 @@ jobs:
       - name: Every action.yml expression must use a context a composite action can read
         run: python3 .github/scripts/verify_action_expressions.py
 
+      - name: Portal reporting and report.py stay correct without Docker
+        run: PYTHONPATH=. python3 -m unittest discover -s tests -v
+
   self-test:
     needs: validate
     runs-on: ubuntu-latest
@@ -79,6 +82,7 @@ jobs:
           FAILED: ${{ steps.kerno.outputs.failed }}
           SKIPPED: ${{ steps.kerno.outputs.skipped }}
           JUNIT: ${{ steps.kerno.outputs.junit-path }}
+          PORTAL: ${{ steps.kerno.outputs.portal-run-urls }}
         run: |
           set -euo pipefail
           echo "outputs: total=$TOTAL passed=$PASSED failed=$FAILED skipped=$SKIPPED junit=$JUNIT"
@@ -91,6 +95,8 @@ jobs:
           [ "$SKIPPED" = "1" ] || problems+=("skipped was '$SKIPPED', expected 1 — a stub was miscounted")
           [ "$JUNIT" = "reports/kerno-junit.xml" ] || problems+=("junit-path was '$JUNIT'")
           [ -f reports/kerno-junit.xml ] || problems+=("the report was not written to report-path")
+          # No credentials were passed; a URL here would mean the no-account path started calling home.
+          [ -z "$PORTAL" ] || problems+=("portal-run-urls was '$PORTAL' without api-key")
 
           for problem in "${problems[@]:-}"; do
             [ -n "$problem" ] && echo "::error::$problem"

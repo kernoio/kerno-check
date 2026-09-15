@@ -64,6 +64,30 @@ inputs:
       reported as skipped and never fail the step.
     required: false
     default: "true"
+  api-key:
+    description: >-
+      Virtual key id used to open a portal run per endpoint after replay. Must be set together
+      with organization-id. Leave both unset to keep the no-account path — no portal URL is
+      printed, and nothing calls events-service.
+    required: false
+    default: ""
+  organization-id:
+    description: >-
+      Organization the portal runs belong to. Must be set together with api-key.
+    required: false
+    default: ""
+  events-url:
+    description: >-
+      Events-service base URL used to open and finish portal runs. Leave unset for production
+      (https://events.kerno.io/events-service/). Override for development.
+    required: false
+    default: ""
+  portal-url:
+    description: >-
+      Portal base URL used to build the run links printed in the log. Leave unset for production
+      (https://portal.kerno.io). Override for development.
+    required: false
+    default: ""
 
 outputs:
   junit-path:
@@ -81,6 +105,11 @@ outputs:
   skipped:
     description: Scenarios that never executed — blocked, or not yet implemented.
     value: ${{ steps.report.outputs.skipped }}
+  portal-run-urls:
+    description: >-
+      Portal run URLs opened for this check, one per endpoint, separated by newlines. Empty when
+      api-key was not set, or when opening a run failed. A missing URL never fails the check.
+    value: ${{ steps.report.outputs.portal-run-urls }}
 
 runs:
   using: composite
@@ -298,6 +327,11 @@ runs:
         KERNO_JUNIT_PATH: ${{ steps.replay.outputs.junit-path }}
         KERNO_REPLAY_EXIT: ${{ steps.replay.outputs.replay-exit }}
         KERNO_FAIL_ON_FAILURE: ${{ inputs.fail-on-failure }}
+        KERNO_API_KEY: ${{ inputs.api-key }}
+        KERNO_ORGANIZATION_ID: ${{ inputs.organization-id }}
+        KERNO_EVENTS_URL: ${{ inputs.events-url }}
+        KERNO_PORTAL_URL: ${{ inputs.portal-url }}
+        KERNO_CONTENT_ROOT: ${{ inputs.app-dir }}
       run: |
         set -euo pipefail
         python3 "$GITHUB_ACTION_PATH/report.py"

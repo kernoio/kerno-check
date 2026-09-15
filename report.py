@@ -10,9 +10,13 @@ Exit codes mirror the driver's, because the step's status is what gates the PR:
   3  the runner's bridge never became ready
 """
 
+from __future__ import annotations
+
 import os
 import sys
 import xml.etree.ElementTree as ET
+
+from portal import ReplayCase, load_portal_config, publish_runs
 
 EXIT_OK = 0
 EXIT_SCENARIO_FAILED = 1
@@ -25,7 +29,53 @@ def write_outputs(**values: object) -> None:
         return
     with open(path, "a", encoding="utf-8") as handle:
         for key, value in values.items():
-            handle.write(f"{key}={value}\n")
+            text = "" if value is None else str(value)
+            if "\n" in text:
+                delimiter = "KERNO_EOF"
+                while delimiter in text:
+                    delimiter += "_X"
+                handle.write(f"{key}<<{delimiter}\n{text}\n{delimiter}\n")
+            else:
+                handle.write(f"{key}={text}\n")
+
+
+def emit_portal_runs(urls: list[str], endpoints: list[str]) -> None:
+    write_outputs(**{"portal-run-urls": "\n".join(urls)})
+    if not urls:
+        return
+    print("Portal runs:")
+    for endpoint, url in zip(endpoints, urls, strict=True):
+        print(f"  {endpoint} — {url}")
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not summary:
+        return
+    with open(summary, "a", encoding="utf-8") as handle:
+        handle.write("\n## Portal runs\n\n")
+        for endpoint, url in zip(endpoints, urls, strict=True):
+            handle.write(f"- [{endpoint}]({url})\n")
+
+
+def publish_portal(cases: list[ReplayCase]) -> int | None:
+    try:
+        config = load_portal_config()
+    except ValueError as error:
+        write_outputs(**{"portal-run-urls": ""})
+        print(f"::error::{error}")
+        return EXIT_USAGE
+    if config is None:
+        write_outputs(**{"portal-run-urls": ""})
+        return None
+    runs = publish_runs(cases, config)
+    emit_portal_runs(
+        [run.portal_run_url for run in runs],
+        [run.endpoint for run in runs],
+    )
+    if not runs:
+        print(
+            "::warning::api-key was set but no portal run URL could be opened — "
+            "the check still stands on the JUnit report"
+        )
+    return None
 
 
 def classify(case: ET.Element) -> str:
@@ -47,6 +97,7 @@ def main() -> int:
     # produces a meaningful report, and neither should be reported as a test failure.
     if replay_exit in {"2", "3"}:
         write_outputs(total=0, passed=0, failed=0, skipped=0)
+        write_outputs(**{"portal-run-urls": ""})
         print(f"::error::the Kerno runner could not start (exit {replay_exit}) — see the log above")
         return int(replay_exit)
 
@@ -60,23 +111,33 @@ def main() -> int:
         )
         if not reports:
             write_outputs(total=0, passed=0, failed=0, skipped=0)
+            write_outputs(**{"portal-run-urls": ""})
             print(f"::error::no JUnit reports were written to {junit_path} — see the replay step's log")
             return EXIT_USAGE
     elif junit_path and os.path.isfile(junit_path):
         reports = [junit_path]
     else:
         write_outputs(total=0, passed=0, failed=0, skipped=0)
+        write_outputs(**{"portal-run-urls": ""})
         print("::error::no JUnit report was produced — see the replay step's log for the cause")
         return EXIT_USAGE
 
-    cases = []
+    cases: list[ET.Element] = []
+    replay_cases: list[ReplayCase] = []
+    default_content_root = os.environ.get("KERNO_CONTENT_ROOT", "").strip()
     for report in reports:
         try:
-            cases.extend(ET.parse(report).getroot().iter("testcase"))
+            tree = ET.parse(report)
         except ET.ParseError as error:
             write_outputs(total=0, passed=0, failed=0, skipped=0)
+            write_outputs(**{"portal-run-urls": ""})
             print(f"::error::the JUnit report at {report} is not parseable: {error}")
             return EXIT_USAGE
+        for suite in tree.getroot().iter("testsuite"):
+            content_root = default_content_root or suite.get("name") or ""
+            for case in suite.iter("testcase"):
+                cases.append(case)
+                replay_cases.append(ReplayCase(content_root=content_root, element=case))
 
     counts = {"passed": 0, "failed": 0, "skipped": 0}
     for case in cases:
@@ -93,8 +154,13 @@ def main() -> int:
     if not cases:
         # An empty report means nothing ran. Reporting that as success would make the check
         # meaningless, which is the whole failure mode this action exists to avoid.
+        write_outputs(**{"portal-run-urls": ""})
         print("::error::the report contains no scenarios — nothing was replayed")
         return EXIT_USAGE
+
+    portal_exit = publish_portal(replay_cases)
+    if portal_exit is not None:
+        return portal_exit
 
     if counts["failed"] > 0:
         for case in cases:
