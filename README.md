@@ -8,6 +8,11 @@ name: kerno
 
 on: pull_request
 
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
 jobs:
   kerno:
     runs-on: ubuntu-latest
@@ -26,6 +31,7 @@ jobs:
         if: always()
         with:
           report_paths: kerno-junit.xml
+          comment: false
 ```
 
 No Kerno account, no API key, no agent — unless you opt in to portal links below. The action
@@ -47,7 +53,13 @@ connects to a system under test; it never manages one.
 
 Unset, this action still needs no account. When you pass `api-key` and `organization-id` together,
 it opens one portal run per endpoint after replay and prints the URL — in the job log, the step
-summary, and the `portal-run-urls` output:
+summary, a pull-request comment, and the `portal-run-urls` output. The comment is totals plus one
+row per endpoint (pass/fail and the report link). Without portal URLs it is only the totals — it
+does not list every scenario. Turn `comment: false` on `action-junit-report` so that reporter
+does not also dump every scenario onto the PR.
+
+The workflow needs `pull-requests: write` for the comment to land (a missing permission is a
+warning, not a failed check).
 
 ```yaml
       - uses: kernoio/kerno-check@v1

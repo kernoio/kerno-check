@@ -21,6 +21,7 @@ on:
 # Declared rather than inherited, so being called from release.yml cannot widen it.
 permissions:
   contents: read
+  pull-requests: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -109,6 +110,7 @@ jobs:
         with:
           report_paths: reports/kerno-junit.xml
           check_name: self-test scenarios
+          comment: false
           detailed_summary: true
           include_passed: true
           require_tests: true
