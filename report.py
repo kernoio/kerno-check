@@ -16,7 +16,8 @@ import os
 import sys
 import xml.etree.ElementTree as ET
 
-from portal import ReplayCase, load_portal_config, publish_runs
+from comment import format_comment, upsert_pull_request_comment
+from portal import PortalRun, ReplayCase, load_portal_config, publish_runs
 
 EXIT_OK = 0
 EXIT_SCENARIO_FAILED = 1
@@ -39,43 +40,37 @@ def write_outputs(**values: object) -> None:
                 handle.write(f"{key}={text}\n")
 
 
-def emit_portal_runs(urls: list[str], endpoints: list[str]) -> None:
-    write_outputs(**{"portal-run-urls": "\n".join(urls)})
-    if not urls:
-        return
-    print("Portal runs:")
-    for endpoint, url in zip(endpoints, urls, strict=True):
-        print(f"  {endpoint} — {url}")
+def emit_comment(passed: int, failed: int, skipped: int, runs: list[PortalRun]) -> None:
+    body = format_comment(passed=passed, failed=failed, skipped=skipped, runs=runs)
+    write_outputs(**{"portal-run-urls": "\n".join(run.portal_run_url for run in runs)})
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
-    if not summary:
-        return
-    with open(summary, "a", encoding="utf-8") as handle:
-        handle.write("\n## Portal runs\n\n")
-        for endpoint, url in zip(endpoints, urls, strict=True):
-            handle.write(f"- [{endpoint}]({url})\n")
+    if summary:
+        with open(summary, "a", encoding="utf-8") as handle:
+            handle.write(body)
+            if not body.endswith("\n"):
+                handle.write("\n")
+    if runs:
+        print("Portal runs:")
+        for run in runs:
+            print(f"  {run.endpoint} — {run.portal_run_url}")
+    upsert_pull_request_comment(body)
 
 
-def publish_portal(cases: list[ReplayCase]) -> int | None:
+def publish_portal(cases: list[ReplayCase]) -> tuple[int | None, list[PortalRun]]:
     try:
         config = load_portal_config()
     except ValueError as error:
-        write_outputs(**{"portal-run-urls": ""})
         print(f"::error::{error}")
-        return EXIT_USAGE
+        return EXIT_USAGE, []
     if config is None:
-        write_outputs(**{"portal-run-urls": ""})
-        return None
+        return None, []
     runs = publish_runs(cases, config)
-    emit_portal_runs(
-        [run.portal_run_url for run in runs],
-        [run.endpoint for run in runs],
-    )
     if not runs:
         print(
             "::warning::api-key was set but no portal run URL could be opened — "
             "the check still stands on the JUnit report"
         )
-    return None
+    return None, runs
 
 
 def classify(case: ET.Element) -> str:
@@ -158,7 +153,8 @@ def main() -> int:
         print("::error::the report contains no scenarios — nothing was replayed")
         return EXIT_USAGE
 
-    portal_exit = publish_portal(replay_cases)
+    portal_exit, runs = publish_portal(replay_cases)
+    emit_comment(counts["passed"], counts["failed"], counts["skipped"], runs)
     if portal_exit is not None:
         return portal_exit
 

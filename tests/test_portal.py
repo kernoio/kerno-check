@@ -163,10 +163,10 @@ class PublishRunsTest(unittest.TestCase):
         )
 
         self.assertEqual(
-            [run.portal_run_url for run in runs],
+            [(run.endpoint, run.passed, run.failed, run.skipped, run.portal_run_url) for run in runs],
             [
-                "https://portal.test/runs/run-1?org=org-1",
-                "https://portal.test/runs/run-2?org=org-1",
+                ("GET /health", 1, 0, 1, "https://portal.test/runs/run-1?org=org-1"),
+                ("POST /orders", 0, 1, 0, "https://portal.test/runs/run-2?org=org-1"),
             ],
         )
         self.assertEqual(len(posts), 2)

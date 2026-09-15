@@ -43,6 +43,10 @@ class ReplayCase:
 @dataclass(frozen=True)
 class PortalRun:
     endpoint: str
+    content_root: str
+    passed: int
+    failed: int
+    skipped: int
     run_report_id: str
     portal_run_url: str
 
@@ -198,7 +202,8 @@ def publish_runs(
             print(f"::warning::events-service opened {endpoint} without an id")
             continue
 
-        failed = sum(1 for case in group if _case_status(case) == "failed")
+        statuses = [_case_status(case) for case in group]
+        failed = sum(1 for status in statuses if status == "failed")
         finish_body = json.dumps(
             {
                 "status": "completed",
@@ -230,6 +235,10 @@ def publish_runs(
         published.append(
             PortalRun(
                 endpoint=endpoint,
+                content_root=content_root,
+                passed=sum(1 for status in statuses if status == "passed"),
+                failed=failed,
+                skipped=sum(1 for status in statuses if status == "skipped"),
                 run_report_id=str(run_report_id),
                 portal_run_url=portal_run_url(
                     config.portal_url,

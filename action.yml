@@ -332,6 +332,7 @@ runs:
         KERNO_EVENTS_URL: ${{ inputs.events-url }}
         KERNO_PORTAL_URL: ${{ inputs.portal-url }}
         KERNO_CONTENT_ROOT: ${{ inputs.app-dir }}
+        GITHUB_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
         python3 "$GITHUB_ACTION_PATH/report.py"

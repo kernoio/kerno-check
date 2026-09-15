@@ -37,10 +37,12 @@ class ReportPortalTest(unittest.TestCase):
             junit = Path(tmp) / "junit.xml"
             junit.write_text(JUNIT, encoding="utf-8")
             github_output = Path(tmp) / "output"
+            step_summary = Path(tmp) / "summary.md"
             env = {
                 "KERNO_JUNIT_PATH": str(junit),
                 "KERNO_REPLAY_EXIT": "0",
                 "GITHUB_OUTPUT": str(github_output),
+                "GITHUB_STEP_SUMMARY": str(step_summary),
             }
             with patch.dict(os.environ, env, clear=True):
                 self.assertEqual(report.main(), 0)
@@ -49,6 +51,9 @@ class ReportPortalTest(unittest.TestCase):
             self.assertIn("passed=1\n", text)
             self.assertIn("skipped=1\n", text)
             self.assertIn("portal-run-urls=\n", text)
+            summary = step_summary.read_text(encoding="utf-8")
+            self.assertIn("**Kerno check:** 1 passed, 0 failed, 1 skipped (2 total)", summary)
+            self.assertNotIn("| Endpoint |", summary)
 
     def test_one_credential_without_the_other_is_exit_2(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -82,6 +87,10 @@ class ReportPortalTest(unittest.TestCase):
                 return [
                     PortalRun(
                         endpoint="GET /",
+                        content_root="test-fixture",
+                        passed=1,
+                        failed=0,
+                        skipped=1,
                         run_report_id="run-1",
                         portal_run_url="https://portal.test/runs/run-1?org=org-1",
                     )
@@ -93,7 +102,12 @@ class ReportPortalTest(unittest.TestCase):
                 self.assertEqual(report.main(), 0)
             output = github_output.read_text(encoding="utf-8")
             self.assertIn("https://portal.test/runs/run-1?org=org-1", output)
-            self.assertIn("[GET /](https://portal.test/runs/run-1?org=org-1)", step_summary.read_text())
+            summary = step_summary.read_text(encoding="utf-8")
+            self.assertIn("**Kerno check:** 1 passed, 0 failed, 1 skipped (2 total)", summary)
+            self.assertIn(
+                "| `test-fixture · GET /` | 1 | 0 | [open](https://portal.test/runs/run-1?org=org-1) |",
+                summary,
+            )
 
     def test_a_failed_scenario_still_fails_after_a_portal_url_is_printed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
