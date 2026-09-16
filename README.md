@@ -49,6 +49,27 @@ also why it is fast and free to run.
 It does **not** start your application. You start it in an earlier step and pass `sut-url`. Kerno
 connects to a system under test; it never manages one.
 
+## Critical endpoints
+
+Some endpoints matter more than the rest — checkout, auth, billing. Mark one **critical** in the
+Kerno portal and the check reports what it knows about them, so a reviewer can see whether a pull
+request is near anything the team said must not break.
+
+The set is read from whichever source this run has:
+
+| Source | When | Freshness |
+| --- | --- | --- |
+| `<app>/.kerno/criticality.json` in the checkout | always available; written by the agent on its last sync | as of that sync |
+| the portal | when `api-key` and `organization-id` are set | current |
+
+The portal wins when it is available. If it cannot be reached the check falls back to the committed
+file, says so, and carries on — a check that goes red because the portal blinked is a check people
+learn to ignore. With no account and no file, criticality is simply absent from the output rather
+than reported as zero.
+
+The summary always names the source, because "0 critical endpoints" read live and the same zero read
+from a file written three weeks ago are very different facts.
+
 ## Reporting on the pull request
 
 Three surfaces:

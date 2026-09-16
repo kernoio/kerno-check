@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from criticality import SOURCE_NONE, CriticalitySet
+
 import report
 
 
@@ -104,9 +106,11 @@ class ReportPortalTest(unittest.TestCase):
                     )
                 ]
 
+            # Criticality is stubbed for the same reason publish_runs is: main() reaches
+            # events-service for it, and a unit test must not depend on a network.
             with patch.dict(os.environ, env, clear=True), patch(
                 "report.publish_runs", side_effect=fake_publish
-            ):
+            ), patch("report.load_criticality", return_value=CriticalitySet((), SOURCE_NONE)):
                 self.assertEqual(report.main(), 0)
             output = github_output.read_text(encoding="utf-8")
             self.assertIn("https://portal.test/runs/run-1?org=org-1", output)
@@ -140,9 +144,12 @@ class ReportPortalTest(unittest.TestCase):
                 "KERNO_ORGANIZATION_ID": "org-1",
                 "GITHUB_OUTPUT": str(github_output),
             }
+            # Any test that sets KERNO_API_KEY must stub this: main() reads criticality from
+            # events-service, and the default events URL is PRODUCTION. Unstubbed, this test made a
+            # real request to it on every CI run.
             with patch.dict(os.environ, env, clear=True), patch(
                 "report.publish_runs", side_effect=AssertionError("must not reconstruct from JUnit")
-            ):
+            ), patch("report.load_criticality", return_value=CriticalitySet((), SOURCE_NONE)):
                 self.assertEqual(report.main(), 0)
             self.assertIn("portal-run-urls=\n", github_output.read_text(encoding="utf-8"))
 
