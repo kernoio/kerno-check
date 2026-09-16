@@ -17,7 +17,8 @@ import sys
 import xml.etree.ElementTree as ET
 
 from comment import format_comment, upsert_pull_request_comment
-from portal import PortalRun, load_capture, load_portal_config, publish_runs
+from criticality import CriticalitySet, SOURCE_NONE, describe, load_criticality
+from portal import PortalConfig, PortalRun, load_capture, load_portal_config, publish_runs
 
 EXIT_OK = 0
 EXIT_SCENARIO_FAILED = 1
@@ -56,28 +57,47 @@ def emit_comment(passed: int, failed: int, skipped: int, runs: list[PortalRun]) 
     upsert_pull_request_comment(body)
 
 
-def publish_portal() -> tuple[int | None, list[PortalRun]]:
+def emit_criticality(criticality: CriticalitySet) -> None:
+    """States what this run knows about criticality, and where it learned it.
+
+    Silent when nothing is known — no account and no file means the repository has never been synced
+    by an agent that knew about marks, and a line saying "0 critical endpoints" would read as
+    "somebody looked and found none".
+    """
+    if criticality.source == SOURCE_NONE:
+        return
+    line = f"Kerno criticality: {describe(criticality)}"
+    print(line)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a", encoding="utf-8") as handle:
+            handle.write(f"\n{line}\n")
+
+
+def publish_portal() -> tuple[int | None, list[PortalRun], PortalConfig | None]:
     try:
         config = load_portal_config()
     except ValueError as error:
         print(f"::error::{error}")
-        return EXIT_USAGE, []
+        return EXIT_USAGE, [], None
     if config is None:
-        return None, []
+        return None, [], None
     scenarios = load_capture(os.environ.get("KERNO_CAPTURE_PATH", "").strip())
     if scenarios is None:
         print(
             "::warning::api-key was set but the runner wrote no capture — "
             "portal runs are the HTTP capture, not reconstructed from JUnit"
         )
-        return None, []
+        # The config is still returned: no capture is a reason not to open portal RUNS, not a
+        # reason to stop knowing which endpoints are critical.
+        return None, [], config
     runs = publish_runs(scenarios, config)
     if not runs:
         print(
             "::warning::api-key was set but no portal run URL could be opened — "
             "the check still stands on the JUnit report"
         )
-    return None, runs
+    return None, runs, config
 
 
 def classify(case: ET.Element) -> str:
@@ -156,8 +176,13 @@ def main() -> int:
         print("::error::the report contains no scenarios — nothing was replayed")
         return EXIT_USAGE
 
-    portal_exit, runs = publish_portal()
+    portal_exit, runs, config = publish_portal()
     emit_comment(counts["passed"], counts["failed"], counts["skipped"], runs)
+    # After the comment, because this is a note about the run rather than its result, and before the
+    # failure reporting below so it is on screen whichever way the check goes.
+    emit_criticality(
+        load_criticality(os.environ.get("GITHUB_WORKSPACE", "").strip() or ".", config)
+    )
     if portal_exit is not None:
         return portal_exit
 

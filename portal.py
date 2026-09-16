@@ -115,6 +115,12 @@ def default_http(url: str, headers: dict[str, str], body: bytes) -> tuple[int, s
     return _http("POST", url, headers, body)
 
 
+def default_http_get(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
+    # Same (url, headers, body) shape as the POST/PATCH callers so every seam in this action is
+    # substituted the same way in tests; a GET simply never has a body to send.
+    return _http("GET", url, headers, b"")
+
+
 def default_http_patch(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
     return _http("PATCH", url, headers, body)
 
@@ -128,7 +134,7 @@ def _http(method: str, url: str, headers: dict[str, str], body: bytes) -> tuple[
         return error.code, error.read().decode("utf-8", errors="replace")
 
 
-def _json_headers(api_key: str) -> dict[str, str]:
+def json_headers(api_key: str) -> dict[str, str]:
     return {
         "Content-Type": "application/json",
         VIRTUAL_KEY_HEADER: api_key,
@@ -187,7 +193,7 @@ def publish_runs(
         ).encode("utf-8")
         start_url = f"{events_base}/organizations/{config.organization_id}/run-reports"
         try:
-            status, raw = http_post(start_url, _json_headers(config.api_key), start_body)
+            status, raw = http_post(start_url, json_headers(config.api_key), start_body)
         except (OSError, TimeoutError) as error:
             print(f"::warning::could not open a portal run for {endpoint}: {error}")
             continue
@@ -219,7 +225,7 @@ def publish_runs(
             f"{events_base}/organizations/{config.organization_id}/run-reports/{run_report_id}"
         )
         try:
-            finish_status, _ = http_patch(finish_url, _json_headers(config.api_key), finish_body)
+            finish_status, _ = http_patch(finish_url, json_headers(config.api_key), finish_body)
         except (OSError, TimeoutError) as error:
             print(
                 f"::warning::opened {endpoint} as {run_report_id} but could not finish it: {error}"
