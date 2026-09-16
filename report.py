@@ -17,7 +17,7 @@ import sys
 import xml.etree.ElementTree as ET
 
 from comment import format_comment, upsert_pull_request_comment
-from portal import PortalRun, ReplayCase, load_portal_config, publish_runs
+from portal import PortalRun, load_capture, load_portal_config, publish_runs
 
 EXIT_OK = 0
 EXIT_SCENARIO_FAILED = 1
@@ -56,7 +56,7 @@ def emit_comment(passed: int, failed: int, skipped: int, runs: list[PortalRun]) 
     upsert_pull_request_comment(body)
 
 
-def publish_portal(cases: list[ReplayCase]) -> tuple[int | None, list[PortalRun]]:
+def publish_portal() -> tuple[int | None, list[PortalRun]]:
     try:
         config = load_portal_config()
     except ValueError as error:
@@ -64,7 +64,14 @@ def publish_portal(cases: list[ReplayCase]) -> tuple[int | None, list[PortalRun]
         return EXIT_USAGE, []
     if config is None:
         return None, []
-    runs = publish_runs(cases, config)
+    scenarios = load_capture(os.environ.get("KERNO_CAPTURE_PATH", "").strip())
+    if scenarios is None:
+        print(
+            "::warning::api-key was set but the runner wrote no capture — "
+            "portal runs are the HTTP capture, not reconstructed from JUnit"
+        )
+        return None, []
+    runs = publish_runs(scenarios, config)
     if not runs:
         print(
             "::warning::api-key was set but no portal run URL could be opened — "
@@ -118,8 +125,6 @@ def main() -> int:
         return EXIT_USAGE
 
     cases: list[ET.Element] = []
-    replay_cases: list[ReplayCase] = []
-    default_content_root = os.environ.get("KERNO_CONTENT_ROOT", "").strip()
     for report in reports:
         try:
             tree = ET.parse(report)
@@ -129,10 +134,8 @@ def main() -> int:
             print(f"::error::the JUnit report at {report} is not parseable: {error}")
             return EXIT_USAGE
         for suite in tree.getroot().iter("testsuite"):
-            content_root = default_content_root or suite.get("name") or ""
             for case in suite.iter("testcase"):
                 cases.append(case)
-                replay_cases.append(ReplayCase(content_root=content_root, element=case))
 
     counts = {"passed": 0, "failed": 0, "skipped": 0}
     for case in cases:
@@ -153,7 +156,7 @@ def main() -> int:
         print("::error::the report contains no scenarios — nothing was replayed")
         return EXIT_USAGE
 
-    portal_exit, runs = publish_portal(replay_cases)
+    portal_exit, runs = publish_portal()
     emit_comment(counts["passed"], counts["failed"], counts["skipped"], runs)
     if portal_exit is not None:
         return portal_exit

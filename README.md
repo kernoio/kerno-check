@@ -108,9 +108,8 @@ With portal credentials:
 Without credentials, or if opening a run failed, the table is omitted and only the totals line
 remains. The action upserts one comment (it does not stack a new one on every push).
 
-The linked page is the same `/runs/{id}` a generate or validate run opens. Replay does not ship
-request and response bodies, so the row has the verdicts and not the HTTP diffs — those still
-come from a run on a developer's machine.
+The linked page is the same `/runs/{id}` a generate or validate run opens. Each row is the HTTP
+capture from this replay — request, response, and status — not a stub rebuilt from JUnit.
 
 ### A complete workflow
 
