@@ -128,7 +128,11 @@ def fetch_live(
     )
     try:
         status, raw = http_get(url, json_headers(config.api_key), b"")
-    except (OSError, TimeoutError) as error:
+    except (OSError, TimeoutError, ValueError) as error:
+        # ValueError is not paranoia: a 200 whose body is not UTF-8 — a proxy's error page, say —
+        # raises UnicodeDecodeError out of the shared HTTP helper, and UnicodeDecodeError is a
+        # ValueError, not an OSError. Uncaught it would fail a check whose tests all passed, which
+        # is the one thing criticality must never do.
         print(f"::warning::could not read critical endpoints from the portal: {error}")
         return None
     if status >= 300:
@@ -136,7 +140,7 @@ def fetch_live(
         return None
     try:
         rows = json.loads(raw)
-    except json.JSONDecodeError as error:
+    except ValueError as error:
         print(f"::warning::the portal's critical endpoints were not readable: {error}")
         return None
     if not isinstance(rows, list):

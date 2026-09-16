@@ -69,9 +69,15 @@ def emit_criticality(criticality: CriticalitySet) -> None:
     line = f"Kerno criticality: {describe(criticality)}"
     print(line)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
-    if summary:
+    if not summary:
+        return
+    try:
         with open(summary, "a", encoding="utf-8") as handle:
             handle.write(f"\n{line}\n")
+    except OSError as error:
+        # A note about the run must not be able to sink the run, and this one is appended after the
+        # check's own result is already reported.
+        print(f"::warning::could not write the criticality note to the step summary: {error}")
 
 
 def publish_portal() -> tuple[int | None, list[PortalRun], PortalConfig | None]:

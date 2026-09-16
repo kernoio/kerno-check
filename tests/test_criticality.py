@@ -160,6 +160,14 @@ class FetchLiveTest(unittest.TestCase):
     def test_an_unparseable_body_is_not_an_empty_set(self) -> None:
         self.assertIsNone(fetch_live(config(), http_get=lambda *_: (200, "<html>nope</html>")))
 
+    def test_a_body_that_is_not_text_does_not_fail_the_check(self) -> None:
+        def http_get(*_):
+            # What the shared HTTP helper raises for a 200 whose body is not UTF-8 — a proxy's
+            # error page, say. It is a ValueError, not an OSError.
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+        self.assertIsNone(fetch_live(config(), http_get=http_get))
+
     def test_a_body_that_is_not_a_list_is_not_an_empty_set(self) -> None:
         self.assertIsNone(fetch_live(config(), http_get=lambda *_: (200, '{"endpoints": []}')))
 
