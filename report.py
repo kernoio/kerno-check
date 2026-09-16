@@ -18,7 +18,15 @@ import xml.etree.ElementTree as ET
 
 from comment import format_comment, upsert_pull_request_comment
 from criticality import CriticalitySet, SOURCE_NONE, describe, load_criticality
-from portal import PortalConfig, PortalRun, load_capture, load_portal_config, publish_runs
+from touched import TouchedReport, report_touched
+from portal import (
+    PortalConfig,
+    PortalRun,
+    load_capture,
+    load_portal_config,
+    parse_endpoint,
+    publish_runs,
+)
 
 EXIT_OK = 0
 EXIT_SCENARIO_FAILED = 1
@@ -55,6 +63,63 @@ def emit_comment(passed: int, failed: int, skipped: int, runs: list[PortalRun]) 
         for run in runs:
             print(f"  {run.endpoint} — {run.portal_run_url}")
     upsert_pull_request_comment(body)
+
+
+def endpoint_outcomes(cases: list[ET.Element]) -> dict[tuple[str, str], tuple[int, int, int]]:
+    """Passed/failed/skipped per endpoint, from the report the replay already produced.
+
+    Keyed on (method, path) rather than including the content root: a JUnit suite names the
+    application, a critical endpoint names its module, and the two spellings do not have to agree.
+    Within one repository a method and path identify the endpoint well enough to say whether
+    anything ran against it.
+    """
+    outcomes: dict[tuple[str, str], list[int]] = {}
+    for case in cases:
+        endpoint = parse_endpoint(case.get("classname", ""))
+        if endpoint is None:
+            continue
+        tally = outcomes.setdefault(endpoint, [0, 0, 0])
+        tally[{"passed": 0, "failed": 1, "skipped": 2}[classify(case)]] += 1
+    return {key: (value[0], value[1], value[2]) for key, value in outcomes.items()}
+
+
+def emit_touched(report: TouchedReport) -> None:
+    """Tells the reviewer which critical endpoints this change goes near, and what tested them.
+
+    Silent when nothing critical is touched — a check that speaks on every run stops being read.
+    Never silent about NOT KNOWING, which is the one thing that could be mistaken for an all-clear.
+    """
+    if not report.known:
+        print(f"Kerno criticality: could not tell what this pull request touches — {report.unknown_reason}")
+        return
+    if not report.endpoints:
+        return
+
+    count = len(report.endpoints)
+    heading = f"{count} critical endpoint{'s' if count != 1 else ''} touched by this pull request"
+    lines = [
+        f"  {t.endpoint.label} — {t.changed_file} — {t.outcome}" for t in report.endpoints
+    ]
+    print(f"Kerno criticality: {heading}")
+    for line in lines:
+        print(line)
+
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not summary:
+        return
+    rows = "\n".join(
+        f"| `{t.endpoint.label}` | `{t.changed_file}` | {t.outcome} |" for t in report.endpoints
+    )
+    block = (
+        f"\n**{heading}**\n\n"
+        "| Endpoint | Changed file | This run |\n| --- | --- | --- |\n"
+        f"{rows}\n"
+    )
+    try:
+        with open(summary, "a", encoding="utf-8") as handle:
+            handle.write(block)
+    except OSError as error:
+        print(f"Kerno criticality: could not write the touched table to the step summary ({error})")
 
 
 def emit_criticality(criticality: CriticalitySet) -> None:
@@ -186,9 +251,11 @@ def main() -> int:
     emit_comment(counts["passed"], counts["failed"], counts["skipped"], runs)
     # After the comment, because this is a note about the run rather than its result, and before the
     # failure reporting below so it is on screen whichever way the check goes.
-    emit_criticality(
-        load_criticality(os.environ.get("GITHUB_WORKSPACE", "").strip() or ".", config)
+    criticality = load_criticality(
+        os.environ.get("GITHUB_WORKSPACE", "").strip() or ".", config
     )
+    emit_criticality(criticality)
+    emit_touched(report_touched(criticality.endpoints, endpoint_outcomes(cases)))
     if portal_exit is not None:
         return portal_exit
 
