@@ -7,9 +7,14 @@ places it can be read in CI:
   needs no account, no secret and no network, which is why it is the default; and
 * events-service, when ``api-key``/``organization-id`` are set — always current, never stale.
 
-Live wins when it is available, because a mark made an hour ago should count. But a live fetch that
-cannot answer falls back to the file and warns: a check that goes red because the portal blinked is
-a check people learn to ignore.
+Live wins when it is available, because a mark made an hour ago should count. A live fetch that
+cannot answer falls back to the file and says so in the summary — quietly. It never annotates the
+check and it never fails it: a check that shouts because the portal blinked is a check people learn
+to ignore, and an events-service that predates this route (a 404) is not a problem the reader of a
+pull request can do anything about.
+
+What a failure must NOT do is answer "nothing is critical". That would silently skip the endpoints
+the team most wanted watched, on exactly the runs where the portal was unwell.
 """
 
 from __future__ import annotations
@@ -104,11 +109,24 @@ def load_from_files(workspace: str) -> list[CriticalEndpoint]:
         try:
             with open(path, encoding="utf-8") as handle:
                 found.extend(_parse_document(handle.read(), content_root))
-        except (OSError, json.JSONDecodeError, AttributeError) as error:
+        except (OSError, ValueError, AttributeError) as error:
             # One unreadable file must not hide the marks of every other application in the
-            # repository, and it must certainly not fail the check.
-            print(f"::warning::could not read {path}: {error}")
+            # repository, and it must certainly not fail the check. Logged, not annotated: this one
+            # IS actionable by the repository's owner, but it is still not their reviewer's problem.
+            print(f"Kerno criticality: could not read {path} ({error})")
     return found
+
+
+def _unavailable(reason: str) -> None:
+    """Notes why the portal could not answer, in the log only, and answers "I do not know".
+
+    A plain line rather than `::warning::` on purpose: an annotation lands on the check run and in
+    the pull request, and the reader of a pull request can do nothing about a portal that is down or
+    a deployment that predates this route. The fact still reaches them — the summary line says the
+    marks came from the checkout and why — it just does not decorate their review.
+    """
+    print(f"Kerno criticality: the portal {reason}; using the checkout instead")
+    return None
 
 
 def fetch_live(
@@ -133,19 +151,17 @@ def fetch_live(
         # raises UnicodeDecodeError out of the shared HTTP helper, and UnicodeDecodeError is a
         # ValueError, not an OSError. Uncaught it would fail a check whose tests all passed, which
         # is the one thing criticality must never do.
-        print(f"::warning::could not read critical endpoints from the portal: {error}")
-        return None
+        return _unavailable(f"could not be reached ({error})")
     if status >= 300:
-        print(f"::warning::could not read critical endpoints from the portal (HTTP {status})")
-        return None
+        # 404 in particular is expected rather than wrong: an events-service that predates this
+        # route simply does not have the feature, and the checkout answers instead.
+        return _unavailable(f"answered HTTP {status}")
     try:
         rows = json.loads(raw)
     except ValueError as error:
-        print(f"::warning::the portal's critical endpoints were not readable: {error}")
-        return None
+        return _unavailable(f"answered something unreadable ({error})")
     if not isinstance(rows, list):
-        print("::warning::the portal's critical endpoints were not a list")
-        return None
+        return _unavailable("answered something that was not a list of endpoints")
     return [
         CriticalEndpoint(
             content_root=str(row.get("contentRoot", "") or ""),
@@ -170,6 +186,9 @@ def load_criticality(
         if live is not None:
             return CriticalitySet(endpoints=tuple(live), source=SOURCE_LIVE)
         from_files = load_from_files(workspace)
+        # Never an empty set on failure. Answering "nothing is critical" because a request failed
+        # would skip the endpoints the team most wanted watched, on exactly the runs where the
+        # portal was unwell — silently, which is worse than not having the feature.
         return CriticalitySet(
             endpoints=tuple(from_files),
             source=SOURCE_FILE,

@@ -77,7 +77,7 @@ def emit_criticality(criticality: CriticalitySet) -> None:
     except OSError as error:
         # A note about the run must not be able to sink the run, and this one is appended after the
         # check's own result is already reported.
-        print(f"::warning::could not write the criticality note to the step summary: {error}")
+        print(f"Kerno criticality: could not write the note to the step summary ({error})")
 
 
 def publish_portal() -> tuple[int | None, list[PortalRun], PortalConfig | None]:

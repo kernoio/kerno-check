@@ -230,6 +230,34 @@ class LoadCriticalityTest(unittest.TestCase):
             self.assertEqual(loaded.endpoints, ())
 
 
+class QuietFailureTest(unittest.TestCase):
+    def test_a_portal_failure_never_annotates_the_check(self) -> None:
+        import contextlib
+        import io
+
+        captured = io.StringIO()
+        with contextlib.redirect_stdout(captured):
+            fetch_live(config(), http_get=lambda *_: (404, "not found"))
+
+        output = captured.getvalue()
+        # ::warning:: lands on the check run and in the pull request. A portal that is down, or an
+        # events-service that predates this route, is not something a reviewer can act on.
+        self.assertNotIn("::warning::", output)
+        self.assertNotIn("::error::", output)
+        self.assertIn("using the checkout instead", output)
+
+    def test_a_failure_never_answers_that_nothing_is_critical(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            workspace = Path(raw)
+            write_file(workspace, "", entry("POST", "/checkout"))
+
+            loaded = load_criticality(str(workspace), config(), http_get=lambda *_: (503, ""))
+
+            # The endpoints the team most wanted watched must survive a bad request. Answering []
+            # here would skip them silently, on exactly the runs where the portal was unwell.
+            self.assertEqual([e.label for e in loaded.endpoints], ["POST /checkout"])
+
+
 class DescribeTest(unittest.TestCase):
     def test_names_the_source_so_a_zero_can_be_read_correctly(self) -> None:
         from criticality import CriticalitySet
