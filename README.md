@@ -70,6 +70,36 @@ than reported as zero.
 The summary always names the source, because "0 critical endpoints" read live and the same zero read
 from a file written three weeks ago are very different facts.
 
+### What a pull request touched
+
+On a pull request the check also intersects the changed files with each critical endpoint's recorded
+source file, and reports what it finds:
+
+```
+**2 critical endpoints touched by this pull request**
+
+| Endpoint | Changed file | This run |
+| --- | --- | --- |
+| `DELETE /accounts/{id}` | `src/accounts.ts` | not tested in this run |
+| `POST /checkout`        | `src/checkout.ts` | 3 scenarios, 3 passed |
+```
+
+**"not tested in this run" is the row that matters.** A critical endpoint changed with nothing run
+against it is the situation this exists to make visible.
+
+Changed files come from the GitHub API, not `git diff`, so the default `actions/checkout` is enough —
+no `fetch-depth: 0` and no full clone. It needs the `pull-requests: write` the comment already asks
+for; without it the check says it could not tell rather than reporting nothing touched.
+
+Three limits, stated rather than engineered around:
+
+- **One file, many endpoints.** An unrelated edit in a file that hosts several endpoints flags all of
+  them. Over-warning on a file somebody deliberately marked is cheap.
+- **Shared code is missed.** `filepath` records the handler, so a change to a service or repository
+  layer a critical endpoint depends on is not flagged.
+- **It only knows what it can see.** A push build, a missing token, a refused permission or a change
+  too large for the API all report *could not tell* — never *nothing touched*.
+
 ## Reporting on the pull request
 
 Three surfaces:
