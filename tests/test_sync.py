@@ -46,7 +46,7 @@ def plan(*entries: tuple[str, str, str]) -> str:
     )
 
 
-class Recorder:
+class FakePut:
     def __init__(self, status: int = 200, body: str | None = None, error: Exception | None = None) -> None:
         self.calls: list[tuple[str, dict[str, str], dict]] = []
         self.status = status
@@ -263,22 +263,22 @@ class MainTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def run_main(self, recorder: Recorder, **overrides: str) -> tuple[int, str]:
+    def run_main(self, put: FakePut, **overrides: str) -> tuple[int, str]:
         env = {**self.env, **overrides}
         env = {key: value for key, value in env.items() if value is not None}
         output = io.StringIO()
         with patch.dict(os.environ, env, clear=True), redirect_stdout(output):
-            exit_code = main(http_put=recorder)
+            exit_code = main(http_put=put)
         return exit_code, output.getvalue()
 
     def test_on_the_default_branch_one_snapshot_is_sent_and_summarised(self) -> None:
-        recorder = Recorder()
+        put = FakePut()
 
-        exit_code, _ = self.run_main(recorder)
+        exit_code, _ = self.run_main(put)
 
         self.assertEqual(exit_code, EXIT_OK)
-        self.assertEqual(len(recorder.calls), 1)
-        url, headers, body = recorder.calls[0]
+        self.assertEqual(len(put.calls), 1)
+        url, headers, body = put.calls[0]
         self.assertEqual(url, "http://events.test/events-service/organizations/org-1/repo-snapshots")
         self.assertEqual(headers[VIRTUAL_KEY_HEADER], "vk-1")
         self.assertEqual(
@@ -308,56 +308,56 @@ class MainTest(unittest.TestCase):
         self.assertIn("First snapshot of main", self.summary.read_text(encoding="utf-8"))
 
     def test_without_credentials_nothing_is_sent(self) -> None:
-        recorder = Recorder()
+        put = FakePut()
 
-        exit_code, _ = self.run_main(recorder, KERNO_API_KEY="", KERNO_ORGANIZATION_ID="")
+        exit_code, _ = self.run_main(put, KERNO_API_KEY="", KERNO_ORGANIZATION_ID="")
 
         self.assertEqual(exit_code, EXIT_OK)
-        self.assertEqual(recorder.calls, [])
+        self.assertEqual(put.calls, [])
         self.assertFalse(self.summary.exists())
 
     def test_half_the_credentials_is_a_configuration_error(self) -> None:
-        recorder = Recorder()
+        put = FakePut()
 
-        exit_code, output = self.run_main(recorder, KERNO_ORGANIZATION_ID="")
+        exit_code, output = self.run_main(put, KERNO_ORGANIZATION_ID="")
 
         self.assertEqual(exit_code, EXIT_USAGE)
-        self.assertEqual(recorder.calls, [])
+        self.assertEqual(put.calls, [])
         self.assertIn("::error::", output)
 
     def test_another_branch_is_never_recorded(self) -> None:
-        recorder = Recorder()
+        put = FakePut()
 
-        exit_code, output = self.run_main(recorder, GITHUB_REF="refs/heads/feature", GITHUB_REF_NAME="feature")
+        exit_code, output = self.run_main(put, GITHUB_REF="refs/heads/feature", GITHUB_REF_NAME="feature")
 
         self.assertEqual(exit_code, EXIT_OK)
-        self.assertEqual(recorder.calls, [])
+        self.assertEqual(put.calls, [])
         self.assertIn("only records main", output)
 
     def test_a_tag_or_pull_request_ref_is_never_recorded(self) -> None:
-        recorder = Recorder()
+        put = FakePut()
 
-        exit_code, _ = self.run_main(recorder, GITHUB_REF="refs/pull/7/merge", GITHUB_REF_NAME="7/merge")
+        exit_code, _ = self.run_main(put, GITHUB_REF="refs/pull/7/merge", GITHUB_REF_NAME="7/merge")
 
         self.assertEqual(exit_code, EXIT_OK)
-        self.assertEqual(recorder.calls, [])
+        self.assertEqual(put.calls, [])
 
     def test_an_unknown_default_branch_sends_nothing(self) -> None:
-        recorder = Recorder()
+        put = FakePut()
 
-        exit_code, _ = self.run_main(recorder, GITHUB_EVENT_PATH="")
+        exit_code, _ = self.run_main(put, GITHUB_EVENT_PATH="")
 
         self.assertEqual(exit_code, EXIT_OK)
-        self.assertEqual(recorder.calls, [])
+        self.assertEqual(put.calls, [])
 
     def test_a_server_error_warns_and_leaves_the_step_green(self) -> None:
-        exit_code, output = self.run_main(Recorder(status=503, body="down"))
+        exit_code, output = self.run_main(FakePut(status=503, body="down"))
 
         self.assertEqual(exit_code, EXIT_OK)
         self.assertIn("::warning::could not sync the Kerno snapshot (HTTP 503)", output)
 
     def test_an_unreachable_server_warns_and_leaves_the_step_green(self) -> None:
-        exit_code, output = self.run_main(Recorder(error=OSError("connection refused")))
+        exit_code, output = self.run_main(FakePut(error=OSError("connection refused")))
 
         self.assertEqual(exit_code, EXIT_OK)
         self.assertIn("::warning::could not sync the Kerno snapshot: connection refused", output)

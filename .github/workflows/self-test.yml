@@ -124,10 +124,8 @@ jobs:
         if: ${{ always() }}
         run: docker rm -f self-test-sut kerno-check-run 2>/dev/null || true
 
-  # Sync mode needs no SUT and no Docker. A recorder stands in for events-service. GITHUB_REF and
-  # GITHUB_EVENT_PATH cannot be overridden in a workflow, so the full send is driven through sync.py
-  # with a simulated push to the default branch, and the action itself is checked for what this
-  # event allows.
+  # The request sync sends is covered by tests/test_sync.py. This checks the action wiring: sync
+  # needs no SUT, an unreachable events-service never fails the job, and a mistyped mode does.
   self-test-sync:
     needs: validate
     runs-on: ubuntu-latest
@@ -135,84 +133,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Start the recorder
-        run: |
-          set -euo pipefail
-          : > "$RUNNER_TEMP/capture.jsonl"
-          python3 .github/scripts/recorder.py 8090 "$RUNNER_TEMP/capture.jsonl" &
-          for _ in $(seq 1 20); do
-            if curl -fsS -o /dev/null http://127.0.0.1:8090/ready; then : > "$RUNNER_TEMP/capture.jsonl"; exit 0; fi
-            sleep 0.5
-          done
-          echo "the recorder never became ready" >&2
-          exit 1
-
       - name: Sync with no credentials
         uses: ./
         with:
           mode: sync
 
-      - name: Assert no credentials means no request
-        run: |
-          set -euo pipefail
-          if [ -s "$RUNNER_TEMP/capture.jsonl" ]; then
-            echo "::error::sync called events-service without api-key:"
-            cat "$RUNNER_TEMP/capture.jsonl"
-            exit 1
-          fi
-
-      - name: Sync with credentials
+      - name: Sync against an unreachable events-service
         uses: ./
         with:
           mode: sync
           api-key: self-test-key
           organization-id: self-test-org
-          events-url: http://127.0.0.1:8090/events-service/
-
-      - name: Assert only a push to the default branch is recorded
-        env:
-          EVENT: ${{ github.event_name }}
-          REF: ${{ github.ref }}
-          DEFAULT: refs/heads/${{ github.event.repository.default_branch }}
-        run: |
-          set -euo pipefail
-          count=$(grep -c '"PUT"' "$RUNNER_TEMP/capture.jsonl" || true)
-          if [ "$EVENT" = "push" ] && [ "$REF" = "$DEFAULT" ]; then expected=1; else expected=0; fi
-          if [ "$count" != "$expected" ]; then
-            echo "::error::$EVENT on $REF sent $count snapshot(s), expected $expected"
-            cat "$RUNNER_TEMP/capture.jsonl"
-            exit 1
-          fi
-          : > "$RUNNER_TEMP/capture.jsonl"
-
-      - name: Simulate a push to the default branch
-        run: |
-          set -euo pipefail
-          echo '{"repository": {"default_branch": "main"}}' > "$RUNNER_TEMP/push-event.json"
-          export KERNO_API_KEY=self-test-key KERNO_ORGANIZATION_ID=self-test-org
-          export GITHUB_EVENT_PATH="$RUNNER_TEMP/push-event.json" GITHUB_REF=refs/heads/main GITHUB_REF_NAME=main
-
-          KERNO_EVENTS_URL=http://127.0.0.1:8090/events-service/ python3 sync.py
-
-          python3 - "$RUNNER_TEMP/capture.jsonl" <<'PY'
-          import json, sys
-          calls = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8")]
-          assert len(calls) == 1, f"expected one request, got {len(calls)}"
-          call = calls[0]
-          assert call["method"] == "PUT", call["method"]
-          assert call["path"] == "/events-service/organizations/self-test-org/repo-snapshots", call["path"]
-          body = json.loads(call["body"])
-          endpoints = {(e["contentRoot"], e["method"], e["urlPath"]): e["scenarios"] for e in body["endpoints"]}
-          assert set(endpoints) == {("test-fixture", "GET", "/"), ("test-fixture-second", "GET", "/")}, endpoints
-          first = {s["id"]: s for s in endpoints[("test-fixture", "GET", "/")]}
-          assert set(first) == {"fixture_pass", "fixture_skipped"}, first
-          assert first["fixture_pass"]["title"] == "GET / answers 200 with status ok", first["fixture_pass"]
-          assert first["fixture_skipped"]["title"] is None, first["fixture_skipped"]
-          print("snapshot body as expected")
-          PY
-
-          KERNO_EVENTS_URL=http://127.0.0.1:9/events-service/ python3 sync.py
-          echo "an unreachable events-service left the sync green"
+          events-url: http://127.0.0.1:9/events-service/
 
       - name: An unknown mode must be rejected
         id: bad_mode
