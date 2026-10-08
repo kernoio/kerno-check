@@ -124,6 +124,42 @@ jobs:
         if: ${{ always() }}
         run: docker rm -f self-test-sut kerno-check-run 2>/dev/null || true
 
+  # The request sync sends is covered by tests/test_sync.py. This checks the action wiring: sync
+  # needs no SUT, an unreachable events-service never fails the job, and a mistyped mode does.
+  self-test-sync:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Sync with no credentials
+        uses: ./
+        with:
+          mode: sync
+
+      - name: Sync against an unreachable events-service
+        uses: ./
+        with:
+          mode: sync
+          api-key: self-test-key
+          organization-id: self-test-org
+          events-url: http://127.0.0.1:9/events-service/
+
+      - name: An unknown mode must be rejected
+        id: bad_mode
+        continue-on-error: true
+        uses: ./
+        with:
+          mode: replay-everything
+
+      - name: Assert the unknown mode failed
+        run: |
+          if [ "${{ steps.bad_mode.outcome }}" != "failure" ]; then
+            echo "::error::mode 'replay-everything' was accepted; a typo must not silently skip the check"
+            exit 1
+          fi
+
   # Covers the two inputs a single-application, no-configuration fixture cannot reach: per-app SUT
   # URLs, and forwarding a named variable through to the scenarios. Both are asserted from INSIDE
   # a scenario (test-fixture-second), because that is the only place that can tell whether the
