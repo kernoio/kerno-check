@@ -160,6 +160,81 @@ jobs:
             exit 1
           fi
 
+  # The default configuration: sut-url and nothing else, so the runner discovers BOTH fixtures.
+  # This is what a monorepo gets by following the app-dir documentation, and it is the shape that
+  # the app-dir and apps jobs cannot reach — each of those pins the application count from the
+  # inputs, where here it is only known once discovery has run inside the container.
+  self-test-discovery:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      # 8081 because test-fixture-second asserts its own port; discovery replays every application
+      # against the one sut-url, so that is the port both of them have to share here.
+      - name: Start the system under test
+        run: |
+          set -euo pipefail
+          docker run -d --name discovery-sut -p 8081:9876 \
+            kernoio/ts-sandbox@sha256:0f5d2c152dcfd1ad0ceb5dbbf42b6b966de03d3a3d869c4f48f3a3d03eac74d1
+          for _ in $(seq 1 45); do
+            if curl -fsS -o /dev/null http://localhost:8081/; then echo "SUT ready"; exit 0; fi
+            sleep 2
+          done
+          echo "the system under test never became ready" >&2
+          docker logs discovery-sut 2>&1 | tail -30 >&2
+          exit 1
+
+      - name: Run the action with no app-dir and no apps
+        id: kerno
+        uses: ./
+        with:
+          sut-url: http://localhost:8081
+          forward-env: |
+            KERNO_SELF_TEST_TOKEN
+          report-path: reports/discovered
+        env:
+          KERNO_SELF_TEST_TOKEN: forwarded-ok
+
+      - name: Assert discovery replayed both applications and wrote its reports
+        if: ${{ always() }}
+        env:
+          TOTAL: ${{ steps.kerno.outputs.total }}
+          PASSED: ${{ steps.kerno.outputs.passed }}
+          FAILED: ${{ steps.kerno.outputs.failed }}
+          SKIPPED: ${{ steps.kerno.outputs.skipped }}
+          JUNIT: ${{ steps.kerno.outputs.junit-path }}
+        run: |
+          set -euo pipefail
+          echo "outputs: total=$TOTAL passed=$PASSED failed=$FAILED skipped=$SKIPPED junit=$JUNIT"
+
+          problems=()
+          # 2 from test-fixture (one pass, one stub) + 1 from test-fixture-second.
+          [ "$TOTAL" = "3" ]   || problems+=("total was '$TOTAL', expected 3 — did discovery find both applications?")
+          [ "$PASSED" = "2" ]  || problems+=("passed was '$PASSED', expected 2")
+          [ "$FAILED" = "0" ]  || problems+=("failed was '$FAILED', expected 0")
+          [ "$SKIPPED" = "1" ] || problems+=("skipped was '$SKIPPED', expected 1 — a stub was miscounted")
+          # The regression this job exists for: several discovered applications used to abort the
+          # run at report time, leaving report-path empty and the check red as a config error.
+          [ "$JUNIT" = "reports/discovered" ] || problems+=("junit-path was '$JUNIT', expected reports/discovered")
+          [ -d reports/discovered ] || problems+=("report-path is not a directory — several applications need one report each")
+          found=$(find reports/discovered -maxdepth 1 -name '*.xml' | wc -l)
+          [ "$found" = "2" ] || problems+=("report-path holds $found report(s), expected 2")
+
+          for problem in "${problems[@]:-}"; do
+            [ -n "$problem" ] && echo "::error::$problem"
+          done
+          [ "${#problems[@]}" -eq 0 ]
+
+      - name: System under test logs on failure
+        if: ${{ failure() }}
+        run: docker logs discovery-sut 2>&1 | tail -60
+
+      - name: Tear down
+        if: ${{ always() }}
+        run: docker rm -f discovery-sut kerno-check-run 2>/dev/null || true
+
   # Covers the two inputs a single-application, no-configuration fixture cannot reach: per-app SUT
   # URLs, and forwarding a named variable through to the scenarios. Both are asserted from INSIDE
   # a scenario (test-fixture-second), because that is the only place that can tell whether the

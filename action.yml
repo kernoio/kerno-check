@@ -29,7 +29,8 @@ inputs:
     description: >-
       Directory of the application whose scenarios to replay, relative to the repository root.
       Leave unset to discover every <app>/.kerno/scenarios tree in the repository, which is what a
-      monorepo usually wants. Every discovered app is replayed against the same sut-url.
+      monorepo usually wants. Every discovered app is replayed against the same sut-url, and
+      report-path is then a directory rather than a file when discovery finds more than one.
     required: false
     default: ""
   scenarios:
@@ -64,7 +65,10 @@ inputs:
     required: false
     default: ""
   report-path:
-    description: JUnit XML report destination, relative to the workspace.
+    description: >-
+      JUnit XML report destination, relative to the workspace. A file when a single application was
+      replayed; a DIRECTORY of one report per application when `apps` is used, or when discovery
+      finds several applications. Point a reporter at `<report-path>/*.xml` to cover both.
     required: false
     default: kerno-junit.xml
   fail-on-failure:
@@ -293,14 +297,11 @@ runs:
           url_args=(--sut-base-url="$sut_url")
         fi
 
-        # The driver writes one report per application and refuses --junit for more than one, so
-        # `apps` gets a directory. report-path is then the directory the reports land in; with a
-        # single application it stays exactly what it was, a file.
-        if [ "${#app_args[@]}" -gt 0 ]; then
-          junit_args=(--junit-dir=/out/junit)
-        else
-          junit_args=(--junit=/out/junit.xml)
-        fi
+        # The driver writes one report per application and refuses --junit for more than one, and
+        # how many there are is only known after discovery has run INSIDE the container — so no
+        # combination of inputs can pick the flag correctly. Always ask for a directory, and decide
+        # report-path's shape below from what actually came back.
+        junit_args=(--junit-dir=/out/junit)
 
         docker run --name kerno-check-run \
           --add-host=host.docker.internal:host-gateway \
@@ -322,11 +323,21 @@ runs:
         docker cp kerno-check-run:/out/. "$report_dir/" || echo "::warning::the run produced no reports"
         docker rm -f kerno-check-run >/dev/null 2>&1 || true
 
-        if [ -f "$report_dir/junit.xml" ]; then
+        # report-path keeps the shape it has always had: a file when one application was replayed,
+        # the directory of per-application reports when several were. `apps` names its applications
+        # up front and has always produced a directory, so it stays one even at a single app.
+        reports=()
+        if [ -d "$report_dir/junit" ]; then
+          while IFS= read -r report; do
+            reports+=("$report")
+          done < <(find "$report_dir/junit" -maxdepth 1 -type f -name '*.xml' | sort)
+        fi
+
+        if [ "${#reports[@]}" -eq 1 ] && [ "${#app_args[@]}" -eq 0 ]; then
           mkdir -p "$(dirname "$GITHUB_WORKSPACE/$KERNO_REPORT_PATH")"
-          cp "$report_dir/junit.xml" "$GITHUB_WORKSPACE/$KERNO_REPORT_PATH"
+          cp "${reports[0]}" "$GITHUB_WORKSPACE/$KERNO_REPORT_PATH"
           echo "junit-path=$KERNO_REPORT_PATH" >> "$GITHUB_OUTPUT"
-        elif [ -d "$report_dir/junit" ]; then
+        elif [ "${#reports[@]}" -gt 0 ]; then
           mkdir -p "$GITHUB_WORKSPACE/$KERNO_REPORT_PATH"
           cp "$report_dir/junit/." "$GITHUB_WORKSPACE/$KERNO_REPORT_PATH" -r
           echo "junit-path=$KERNO_REPORT_PATH" >> "$GITHUB_OUTPUT"
@@ -334,14 +345,11 @@ runs:
           echo "junit-path=" >> "$GITHUB_OUTPUT"
         fi
 
-        # The portal payload is the runner's HTTP capture, written next to JUnit. Copied to a
-        # stable workspace path so the report step does not have to guess which of those two
-        # layouts the replay used.
+        # The portal payload is the runner's HTTP capture, written next to the JUnit reports.
+        # Copied to a stable workspace path so the report step does not have to care whether
+        # report-path ended up a file or a directory.
         capture=""
-        if [ -f "$report_dir/run-report.json" ]; then
-          capture="$GITHUB_WORKSPACE/kerno-run-report.json"
-          cp "$report_dir/run-report.json" "$capture"
-        elif [ -f "$report_dir/junit/run-report.json" ]; then
+        if [ -f "$report_dir/junit/run-report.json" ]; then
           capture="$GITHUB_WORKSPACE/kerno-run-report.json"
           cp "$report_dir/junit/run-report.json" "$capture"
         fi
