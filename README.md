@@ -419,7 +419,14 @@ that authors scenarios in the first place are separate, and are not MIT licensed
 
 ## Requirements
 
-A Linux runner with Docker. `ubuntu-latest` works as-is.
+`ubuntu-latest` works as-is. On a self-hosted runner you need:
+
+| Mode | Needs |
+|------|-------|
+| `replay` (default) | A Linux runner with Docker and `python3` |
+| `sync` | `python3` only — no Docker, no running application |
+
+Both use only Python's standard library; nothing is installed.
 
 The action adds `--cap-add=NET_ADMIN` to the runner container so Kerno can intercept outbound
 HTTPS from your application — which is how scenarios can exercise paths that call third-party APIs
