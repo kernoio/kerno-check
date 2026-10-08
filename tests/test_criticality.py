@@ -24,7 +24,7 @@ from portal import PortalConfig  # noqa: E402
 
 def config() -> PortalConfig:
     return PortalConfig(
-        api_key="vk-1",
+        virtual_key_id="vk-1",
         organization_id="org-1",
         events_url="https://events.test/events-service/",
         portal_url="https://portal.test",

@@ -7,17 +7,37 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import io
+from contextlib import redirect_stdout
+
+from fakes import API_KEY, ORGANIZATION_ID, VIRTUAL_KEY_ID, FakeExchange
 from portal import (
+    DEFAULT_BACKEND_URL,
     DEFAULT_EVENTS_URL,
     DEFAULT_PORTAL_URL,
     VIRTUAL_KEY_HEADER,
+    PortalConfig,
     group_by_endpoint,
     load_capture,
+    load_credentials,
     load_portal_config,
     parse_endpoint,
     portal_run_url,
     publish_runs,
 )
+
+
+def portal_config(**overrides: str) -> PortalConfig:
+    values = {
+        "virtual_key_id": VIRTUAL_KEY_ID,
+        "organization_id": ORGANIZATION_ID,
+        "events_url": "https://events.test/events-service/",
+        "portal_url": "https://portal.test",
+        "git_repo": "acme/shop",
+        "git_branch": "main",
+        "commit_sha": "deadbeef",
+    }
+    return PortalConfig(**{**values, **overrides})
 
 
 def scenario(
@@ -108,33 +128,98 @@ class LoadCaptureTest(unittest.TestCase):
         self.assertEqual(loaded[0]["row"]["responseStatus"], 200)
 
 
+class LoadCredentialsTest(unittest.TestCase):
+    def load(self, env: dict[str, str], exchange: FakeExchange) -> tuple[object, str]:
+        output = io.StringIO()
+        with patch.dict(os.environ, env, clear=True), redirect_stdout(output):
+            credentials = load_credentials(exchange)
+        return credentials, output.getvalue()
+
+    def test_without_an_api_key_nothing_is_exchanged(self) -> None:
+        exchange = FakeExchange()
+        credentials, _ = self.load({}, exchange)
+        self.assertIsNone(credentials)
+        self.assertEqual(exchange.calls, [])
+
+    def test_an_organization_without_an_api_key_is_a_configuration_error(self) -> None:
+        with patch.dict(os.environ, {"KERNO_ORGANIZATION_ID": ORGANIZATION_ID}, clear=True):
+            with self.assertRaises(ValueError):
+                load_credentials(FakeExchange())
+
+    def test_the_api_key_alone_resolves_the_key_id_and_organization(self) -> None:
+        exchange = FakeExchange()
+        credentials, _ = self.load({"KERNO_API_KEY": API_KEY}, exchange)
+
+        self.assertEqual(credentials.virtual_key_id, VIRTUAL_KEY_ID)
+        self.assertEqual(credentials.organization_id, ORGANIZATION_ID)
+        self.assertEqual(credentials.events_url, DEFAULT_EVENTS_URL)
+        url, headers, body = exchange.calls[0]
+        self.assertEqual(url, f"{DEFAULT_BACKEND_URL}/api/api-keys/exchange")
+        self.assertEqual(headers, {"Content-Type": "application/json"})
+        self.assertEqual(body, {"apiKey": API_KEY, "organizationId": None})
+
+    def test_a_given_organization_and_backend_are_passed_to_the_exchange(self) -> None:
+        exchange = FakeExchange()
+        self.load(
+            {
+                "KERNO_API_KEY": API_KEY,
+                "KERNO_ORGANIZATION_ID": ORGANIZATION_ID,
+                "KERNO_BACKEND_URL": "https://api.dev.test/",
+            },
+            exchange,
+        )
+        url, _, body = exchange.calls[0]
+        self.assertEqual(url, "https://api.dev.test/api/api-keys/exchange")
+        self.assertEqual(body["organizationId"], ORGANIZATION_ID)
+
+    def test_a_rejected_key_warns_without_printing_it(self) -> None:
+        credentials, output = self.load({"KERNO_API_KEY": API_KEY}, FakeExchange(status=401, body="{}"))
+
+        self.assertIsNone(credentials)
+        self.assertIn("::warning::Kerno did not accept api-key", output)
+        self.assertIn("Settings → API key", output)
+        self.assertNotIn(API_KEY, output)
+
+    def test_a_server_error_warns(self) -> None:
+        credentials, output = self.load({"KERNO_API_KEY": API_KEY}, FakeExchange(status=503, body="down"))
+        self.assertIsNone(credentials)
+        self.assertIn("(HTTP 503)", output)
+
+    def test_an_unreachable_backend_warns(self) -> None:
+        credentials, output = self.load(
+            {"KERNO_API_KEY": API_KEY}, FakeExchange(error=OSError("connection refused"))
+        )
+        self.assertIsNone(credentials)
+        self.assertIn("::warning::could not reach Kerno", output)
+
+    def test_an_answer_without_a_key_id_warns(self) -> None:
+        credentials, output = self.load(
+            {"KERNO_API_KEY": API_KEY}, FakeExchange(body=json.dumps({"organizationId": ORGANIZATION_ID}))
+        )
+        self.assertIsNone(credentials)
+        self.assertIn("did not say which key", output)
+
+
 class LoadPortalConfigTest(unittest.TestCase):
     def test_unset_credentials_skip_the_portal(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
-            self.assertIsNone(load_portal_config())
-
-    def test_one_credential_without_the_other_is_a_configuration_error(self) -> None:
-        with patch.dict(os.environ, {"KERNO_API_KEY": "vk-1"}, clear=True):
-            with self.assertRaises(ValueError):
-                load_portal_config()
-        with patch.dict(os.environ, {"KERNO_ORGANIZATION_ID": "org-1"}, clear=True):
-            with self.assertRaises(ValueError):
-                load_portal_config()
+            self.assertIsNone(load_portal_config(FakeExchange()))
 
     def test_defaults_point_at_production(self) -> None:
         with patch.dict(
             os.environ,
             {
-                "KERNO_API_KEY": "vk-1",
-                "KERNO_ORGANIZATION_ID": "org-1",
+                "KERNO_API_KEY": API_KEY,
                 "GITHUB_REPOSITORY": "acme/shop",
                 "GITHUB_REF_NAME": "main",
                 "GITHUB_SHA": "abc",
             },
             clear=True,
         ):
-            config = load_portal_config()
+            config = load_portal_config(FakeExchange())
         assert config is not None
+        self.assertEqual(config.virtual_key_id, VIRTUAL_KEY_ID)
+        self.assertEqual(config.organization_id, ORGANIZATION_ID)
         self.assertEqual(config.events_url, DEFAULT_EVENTS_URL)
         self.assertEqual(config.portal_url, DEFAULT_PORTAL_URL)
         self.assertEqual(config.git_repo, "acme/shop")
@@ -145,14 +230,13 @@ class LoadPortalConfigTest(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "KERNO_API_KEY": "vk-1",
-                "KERNO_ORGANIZATION_ID": "org-1",
+                "KERNO_API_KEY": API_KEY,
                 "GITHUB_HEAD_REF": "feature",
                 "GITHUB_REF_NAME": "123/merge",
             },
             clear=True,
         ):
-            config = load_portal_config()
+            config = load_portal_config(FakeExchange())
         assert config is not None
         self.assertEqual(config.git_branch, "feature")
 
@@ -178,21 +262,7 @@ class PublishRunsTest(unittest.TestCase):
             patches.append((url, headers, body))
             return 200, ""
 
-        with patch.dict(
-            os.environ,
-            {
-                "KERNO_API_KEY": "vk-1",
-                "KERNO_ORGANIZATION_ID": "org-1",
-                "KERNO_EVENTS_URL": "https://events.test/events-service/",
-                "KERNO_PORTAL_URL": "https://portal.test",
-                "GITHUB_REPOSITORY": "acme/shop",
-                "GITHUB_REF_NAME": "main",
-                "GITHUB_SHA": "deadbeef",
-            },
-            clear=True,
-        ):
-            config = load_portal_config()
-        assert config is not None
+        config = portal_config()
 
         ok = scenario(name="ok", endpoint="GET /health")
         stub = scenario(name="stub", endpoint="GET /health", status="skipped")
@@ -213,7 +283,7 @@ class PublishRunsTest(unittest.TestCase):
         )
         self.assertEqual(len(posts), 2)
         self.assertEqual(len(patches), 2)
-        self.assertEqual(posts[0][1][VIRTUAL_KEY_HEADER], "vk-1")
+        self.assertEqual(posts[0][1][VIRTUAL_KEY_HEADER], VIRTUAL_KEY_ID)
         start = json.loads(posts[0][2])
         self.assertEqual(start["method"], "GET")
         self.assertEqual(start["urlPath"], "/health")
@@ -244,13 +314,7 @@ class PublishRunsTest(unittest.TestCase):
         def http_post(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
             raise AssertionError("must not open a run without a capture row")
 
-        with patch.dict(
-            os.environ,
-            {"KERNO_API_KEY": "vk-1", "KERNO_ORGANIZATION_ID": "org-1"},
-            clear=True,
-        ):
-            config = load_portal_config()
-        assert config is not None
+        config = portal_config()
         runs = publish_runs(
             [{"contentRoot": "app", "endpoint": "GET /health", "status": "passed"}],
             config,
@@ -262,13 +326,7 @@ class PublishRunsTest(unittest.TestCase):
         def http_post(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
             raise TimeoutError("events-service did not answer")
 
-        with patch.dict(
-            os.environ,
-            {"KERNO_API_KEY": "vk-1", "KERNO_ORGANIZATION_ID": "org-1"},
-            clear=True,
-        ):
-            config = load_portal_config()
-        assert config is not None
+        config = portal_config()
         runs = publish_runs(
             [scenario(name="ok", endpoint="GET /health")],
             config,
@@ -280,13 +338,7 @@ class PublishRunsTest(unittest.TestCase):
         def http_post(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
             return 503, "unavailable"
 
-        with patch.dict(
-            os.environ,
-            {"KERNO_API_KEY": "vk-1", "KERNO_ORGANIZATION_ID": "org-1"},
-            clear=True,
-        ):
-            config = load_portal_config()
-        assert config is not None
+        config = portal_config()
         runs = publish_runs(
             [scenario(name="ok", endpoint="GET /health")],
             config,

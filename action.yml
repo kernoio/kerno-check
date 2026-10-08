@@ -12,8 +12,8 @@ inputs:
       `replay` (default) runs the committed scenarios against sut-url and reports them as a check.
       `sync` runs nothing: on a push to the default branch it sends the committed scenarios to
       Kerno as that commit's snapshot, so the portal can track the default branch over time, and
-      writes what the merge changed to the job summary. `sync` needs api-key and organization-id
-      and ignores every replay input.
+      writes what the merge changed to the job summary. `sync` needs api-key and ignores every
+      replay input.
     required: false
     default: replay
   sut-url:
@@ -76,14 +76,22 @@ inputs:
     default: "true"
   api-key:
     description: >-
-      Virtual key id used to open a portal run per endpoint after replay, and to send the snapshot
-      in sync mode. Must be set together with organization-id. Leave both unset to keep the
-      no-account path — no portal URL is printed, and nothing calls events-service.
+      Your API key from Settings → API key in the Kerno portal. Store it as a repository secret.
+      Used to open a portal run per endpoint after replay, and to send the snapshot in sync mode.
+      Leave unset to keep the no-account path — no portal URL is printed, and nothing is sent to
+      Kerno. A key Kerno does not accept is a warning, never a failed step.
     required: false
     default: ""
   organization-id:
     description: >-
-      Organization the portal runs belong to. Must be set together with api-key.
+      Optional. The organization to use, for an API key that belongs to several. Leave unset and
+      the key's own organization is used. Setting it without api-key is an error.
+    required: false
+    default: ""
+  backend-url:
+    description: >-
+      Kerno API base URL used to check api-key. Leave unset for production
+      (https://api.kerno.io). Override for development.
     required: false
     default: ""
   events-url:
@@ -366,6 +374,7 @@ runs:
         KERNO_API_KEY: ${{ inputs.api-key }}
         KERNO_ORGANIZATION_ID: ${{ inputs.organization-id }}
         KERNO_EVENTS_URL: ${{ inputs.events-url }}
+        KERNO_BACKEND_URL: ${{ inputs.backend-url }}
         KERNO_PORTAL_URL: ${{ inputs.portal-url }}
         GITHUB_TOKEN: ${{ github.token }}
       run: |
@@ -379,6 +388,7 @@ runs:
         KERNO_API_KEY: ${{ inputs.api-key }}
         KERNO_ORGANIZATION_ID: ${{ inputs.organization-id }}
         KERNO_EVENTS_URL: ${{ inputs.events-url }}
+        KERNO_BACKEND_URL: ${{ inputs.backend-url }}
       run: |
         set -euo pipefail
         python3 "$GITHUB_ACTION_PATH/sync.py"

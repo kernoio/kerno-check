@@ -60,7 +60,7 @@ The set is read from whichever source this run has:
 | Source | When | Freshness |
 | --- | --- | --- |
 | `<app>/.kerno/criticality.json` in the checkout | always available; written by the agent on its last sync | as of that sync |
-| the portal | when `api-key` and `organization-id` are set | current |
+| the portal | when `api-key` is set | current |
 
 The portal wins when it is available. If it cannot be reached the check falls back to the committed
 file, says so, and carries on — a check that goes red because the portal blinked is a check people
@@ -101,16 +101,22 @@ comment just does not land.
 
 ### Secrets and variables
 
-Create these on the repository (Settings → Secrets and variables → Actions):
+Create one secret on the repository (Settings → Secrets and variables → Actions):
 
 | Name | Kind | |
 |------|------|-|
-| `KERNO_API_KEY` | **secret** | A virtual key id. Opens the portal runs. |
-| `KERNO_ORGANIZATION_ID` | **variable** | The organization those runs belong to. Not a secret. |
+| `KERNO_API_KEY` | **secret** | Your API key, from Settings → API key in the Kerno portal. |
 
-Both must be set together, or neither. One without the other is a configuration error (exit 2)
-before anything is published. Leave both unset for the no-account path: replay still runs, the
+The action checks the key with Kerno once per run and learns your organization from it, so there
+is nothing else to configure. Leave it unset for the no-account path: replay still runs, the
 comment is only the totals, and nothing calls home.
+
+The key is yours, not the organization's: other members never see it. If you leave the
+organization or delete the key, Kerno stops receiving data from this repository — the job stays
+green with a warning — until someone replaces the secret with their own key.
+
+`organization-id` is only needed when one key belongs to several organizations. Setting it without
+`api-key` is a configuration error (exit 2).
 
 ### What the comment looks like
 
@@ -173,7 +179,6 @@ jobs:
             JWT_SECRET
           report-path: kerno-reports
           api-key: ${{ secrets.KERNO_API_KEY }}
-          organization-id: ${{ vars.KERNO_ORGANIZATION_ID }}
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
@@ -197,14 +202,15 @@ kerno-junit.xml`.
 
 ### Portal hosts
 
-Defaults point at production. Override both together for the development portal:
+Defaults point at production. Override all three together for the development portal:
 
 ```yaml
+          backend-url: https://api.dev.kerno.io
           events-url: https://events.dev.kerno.io/events-service/
           portal-url: https://portal.dev.kerno.io
 ```
 
-A down events-service does not fail the check. The comment then falls back to totals only.
+A down Kerno does not fail the check. The comment then falls back to totals only.
 
 ## Scenarios that need configuration
 
@@ -256,7 +262,73 @@ up. The `total`/`passed`/`failed`/`skipped` outputs are summed across every appl
 ## Tracking the default branch
 
 The pull request check covers one branch. To let the Kerno portal show how your default branch's
-test suite grows over time, add `mode: sync` in its own workflow that runs after every merge:
+test suite grows over time, the same workflow also runs `mode: sync` after every merge. One file
+does both, choosing the mode by event:
+
+```yaml
+name: kerno
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths: ['**/.kerno/**']
+  workflow_dispatch: # run once by hand after setup, to send the first snapshot
+
+jobs:
+  kerno:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Your application. Start it however you already do —
+      # this action only connects to it.
+      - if: github.event_name == 'pull_request'
+        run: docker compose up -d --wait
+
+      - uses: kernoio/kerno-check@v1
+        with:
+          mode: ${{ github.event_name == 'pull_request' && 'replay' || 'sync' }}
+          sut-url: http://localhost:8080
+          api-key: ${{ secrets.KERNO_API_KEY }}
+```
+
+On a pull request it replays; on a push to main, or a run by hand, it syncs.
+
+### How it works
+
+- **`on: push: branches: [main]`** runs whenever new commits land on main: merge commits, squash
+  merges, rebase merges and direct pushes. The checkout is main's latest commit, so the snapshot is
+  what is on main now — including anything other pull requests merged before it.
+- **Sync needs no running application and no Docker.** It reads files and sends one request, so it
+  takes seconds. The start-up step only runs for pull requests.
+- **What it sends:** every committed scenario, with its endpoint (from the scenario's `meta.path`),
+  its id (the file name), its file path, and its title and kind from the `plan.json` beside it.
+  Only scenarios are sent — not `.kerno/memory/` or any other file.
+- **Each commit is recorded once.** Running the workflow again for the same commit changes nothing.
+- **The job summary** lists what the merge changed: endpoints added and removed, and scenarios
+  added and removed per endpoint, each linked to the file at that commit.
+- **`paths`** means a merge that does not touch `.kerno` does not run it, and the last snapshot
+  stays as it was — nothing changed, so there is nothing to record.
+- **`workflow_dispatch`** covers the first sync: nothing has merged yet when you set it up, so run
+  it once by hand (Actions → kerno → Run workflow).
+- **Only the default branch is recorded.** A run on any other branch, or for a pull request, sends
+  nothing, so a manual run on a feature branch cannot become the default branch's history.
+- **Without `api-key`, sync sends nothing.** A key Kerno does not accept, or a failed request, is a
+  warning and never fails the job.
+
+### Edge cases
+
+- **Merges made by a workflow using `GITHUB_TOKEN`** — for example a bot that merges pull requests
+  from inside Actions — do not trigger other workflows, so no snapshot is sent. This is a standard
+  GitHub rule, not this action's. A merge by a person, or by GitHub's own auto-merge, is fine.
+- **Merge queues** are expected to trigger `push` when the queue's final merge lands on main, but
+  this is not yet verified.
+
+### Two files instead of one
+
+The sync can also live in its own file, next to your pull request workflow, if you prefer to keep
+it apart from the application start-up steps:
 
 ```yaml
 name: kerno-sync
@@ -265,7 +337,7 @@ on:
   push:
     branches: [main]
     paths: ['**/.kerno/**']
-  workflow_dispatch: # run once by hand after setup, to send the first snapshot
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -280,66 +352,6 @@ jobs:
         with:
           mode: sync
           api-key: ${{ secrets.KERNO_API_KEY }}
-          organization-id: ${{ vars.KERNO_ORGANIZATION_ID }}
-```
-
-Put it in its own file, next to your pull request workflow.
-
-### How it works
-
-- **`on: push: branches: [main]`** runs whenever new commits land on main: merge commits, squash
-  merges, rebase merges and direct pushes. The checkout is main's latest commit, so the snapshot is
-  what is on main now — including anything other pull requests merged before it.
-- **It needs no running application and no Docker.** It reads files and sends one request, so it
-  takes seconds.
-- **What it sends:** every committed scenario, with its endpoint (from the scenario's `meta.path`),
-  its id (the file name), its file path, and its title and kind from the `plan.json` beside it.
-  Only scenarios are sent — not `.kerno/memory/` or any other file.
-- **Each commit is recorded once.** Running the workflow again for the same commit changes nothing.
-- **The job summary** lists what the merge changed: endpoints added and removed, and scenarios
-  added and removed per endpoint, each linked to the file at that commit.
-- **`paths`** means a merge that does not touch `.kerno` does not run it, and the last snapshot
-  stays as it was — nothing changed, so there is nothing to record.
-- **`workflow_dispatch`** covers the first sync: nothing has merged yet when you set it up, so run
-  it once by hand (Actions → kerno-sync → Run workflow).
-- **Only the default branch is recorded.** A run on any other branch, or for a pull request, sends
-  nothing, so a manual run on a feature branch cannot become the default branch's history.
-- **Without `api-key`, sync sends nothing.** A failed request is a warning and never fails the job.
-
-### Edge cases
-
-- **Merges made by a workflow using `GITHUB_TOKEN`** — for example a bot that merges pull requests
-  from inside Actions — do not trigger other workflows, so no snapshot is sent. This is a standard
-  GitHub rule, not this action's. A merge by a person, or by GitHub's own auto-merge, is fine.
-- **Merge queues** are expected to trigger `push` when the queue's final merge lands on main, but
-  this is not yet verified.
-
-### One file instead of two
-
-The pull request check and the sync can share one file, choosing the mode by event. Two files are
-easier to read, because the sync needs none of the application start-up steps:
-
-
-```yaml
-on:
-  pull_request:
-  push:
-    branches: [main]
-    paths: ['**/.kerno/**']
-
-jobs:
-  kerno:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - if: github.event_name == 'pull_request'
-        run: docker compose up -d --wait
-      - uses: kernoio/kerno-check@v1
-        with:
-          mode: ${{ github.event_name == 'pull_request' && 'replay' || 'sync' }}
-          sut-url: http://localhost:8080
-          api-key: ${{ secrets.KERNO_API_KEY }}
-          organization-id: ${{ vars.KERNO_ORGANIZATION_ID }}
 ```
 
 ## Inputs
@@ -355,8 +367,9 @@ jobs:
 | `forward-env` | no | | Environment variable names to pass through to the scenarios, one per line, with values from this step's own `env:`. Only the names listed are forwarded. A name with no value fails the step before the container starts. |
 | `report-path` | no | `kerno-junit.xml` | Where the JUnit XML lands. With `apps` this is a **directory**, since the runner writes one report per application. |
 | `fail-on-failure` | no | `true` | Set `false` to report without gating. |
-| `api-key` | no | | Virtual key id. Together with `organization-id`, opens a portal run per endpoint and prints the URL, or sends the snapshot in `sync` mode. Leave both unset for the no-account path. |
-| `organization-id` | no | | Organization the portal runs belong to. Must be set with `api-key`. |
+| `api-key` | no | | Your API key from Settings → API key, as a secret. Opens a portal run per endpoint and prints the URL, or sends the snapshot in `sync` mode. Leave unset for the no-account path. A key Kerno does not accept is a warning, not a failed step. |
+| `organization-id` | no | *(the key's)* | Only for a key that belongs to several organizations. An error without `api-key`. |
+| `backend-url` | no | *(production)* | Kerno API base URL, used to check `api-key`. Override for development. |
 | `events-url` | no | *(production)* | Events-service base URL. Override for development. |
 | `portal-url` | no | *(production)* | Portal base URL used to build the printed links. Override for development. |
 

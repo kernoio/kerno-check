@@ -145,7 +145,7 @@ def fetch_live(
         f"?gitRepo={quote(config.git_repo, safe='')}"
     )
     try:
-        status, raw = http_get(url, json_headers(config.api_key), b"")
+        status, raw = http_get(url, json_headers(config.virtual_key_id), b"")
     except (OSError, TimeoutError, ValueError) as error:
         # ValueError is not paranoia: a 200 whose body is not UTF-8 — a proxy's error page, say —
         # raises UnicodeDecodeError out of the shared HTTP helper, and UnicodeDecodeError is a

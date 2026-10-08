@@ -6,6 +6,9 @@ would publish empty HTTP and a status of 0.
 
 Best-effort: a down events-service must not fail the check. Unset credentials skip this
 entirely, which is the no-account path the action advertises.
+
+`api-key` is the user's API key from Settings → API key. It is exchanged once for the key id and
+organization events-service expects, so the user never handles either.
 """
 
 from __future__ import annotations
@@ -19,16 +22,25 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+DEFAULT_BACKEND_URL = "https://api.kerno.io"
 DEFAULT_EVENTS_URL = "https://events.kerno.io/events-service/"
 DEFAULT_PORTAL_URL = "https://portal.kerno.io"
 VIRTUAL_KEY_HEADER = "x-kerno-virtual-key-id"
+EXCHANGE_PATH = "/api/api-keys/exchange"
 
 HttpCall = Callable[[str, dict[str, str], bytes], tuple[int, str]]
 
 
 @dataclass(frozen=True)
+class Credentials:
+    virtual_key_id: str
+    organization_id: str
+    events_url: str
+
+
+@dataclass(frozen=True)
 class PortalConfig:
-    api_key: str
+    virtual_key_id: str
     organization_id: str
     events_url: str
     portal_url: str
@@ -48,19 +60,78 @@ class PortalRun:
     portal_run_url: str
 
 
-def load_portal_config() -> PortalConfig | None:
+def load_credentials(http_post: HttpCall | None = None) -> Credentials | None:
+    """The key id and organization to send to events-service, or None when nothing should be sent.
+
+    None without an api-key (the no-account path), and None after a failed exchange, which warns
+    and never fails the step. organization-id alone is a configuration error.
+    """
     api_key = os.environ.get("KERNO_API_KEY", "").strip()
     organization_id = os.environ.get("KERNO_ORGANIZATION_ID", "").strip()
-    if not api_key and not organization_id:
+    if not api_key:
+        if organization_id:
+            raise ValueError("organization-id is set without api-key — set api-key to send anything to Kerno")
+        print("Kerno: no api-key, so nothing is sent to Kerno")
         return None
-    if not api_key or not organization_id:
-        raise ValueError(
-            "api-key and organization-id must be set together — one without the other cannot open a portal run"
-        )
-    return PortalConfig(
-        api_key=api_key,
+
+    exchanged = exchange_api_key(
+        api_key,
+        organization_id or None,
+        os.environ.get("KERNO_BACKEND_URL", "").strip() or DEFAULT_BACKEND_URL,
+        http_post or default_http,
+    )
+    if exchanged is None:
+        return None
+    virtual_key_id, organization_id = exchanged
+    return Credentials(
+        virtual_key_id=virtual_key_id,
         organization_id=organization_id,
         events_url=os.environ.get("KERNO_EVENTS_URL", "").strip() or DEFAULT_EVENTS_URL,
+    )
+
+
+def exchange_api_key(
+    api_key: str,
+    organization_id: str | None,
+    backend_url: str,
+    http_post: HttpCall,
+) -> tuple[str, str] | None:
+    url = f"{backend_url.rstrip('/')}{EXCHANGE_PATH}"
+    body = json.dumps({"apiKey": api_key, "organizationId": organization_id}).encode("utf-8")
+    try:
+        status, raw = http_post(url, {"Content-Type": "application/json"}, body)
+    except (OSError, TimeoutError) as error:
+        print(f"::warning::could not reach Kerno to check api-key: {error}")
+        return None
+    if status == 401:
+        print(
+            "::warning::Kerno did not accept api-key. Use the API key from Settings → API key in the "
+            "Kerno portal, and check it has not expired or been deleted. Nothing is sent to Kerno."
+        )
+        return None
+    if status >= 300:
+        print(f"::warning::could not check api-key with Kerno (HTTP {status}); nothing is sent to Kerno")
+        return None
+    try:
+        response = json.loads(raw)
+    except json.JSONDecodeError:
+        response = None
+    virtual_key_id = response.get("virtualKeyId") if isinstance(response, dict) else None
+    resolved_organization = response.get("organizationId") if isinstance(response, dict) else None
+    if not isinstance(virtual_key_id, str) or not isinstance(resolved_organization, str):
+        print("::warning::Kerno accepted api-key but did not say which key and organization it is")
+        return None
+    return virtual_key_id, resolved_organization
+
+
+def load_portal_config(http_post: HttpCall | None = None) -> PortalConfig | None:
+    credentials = load_credentials(http_post)
+    if credentials is None:
+        return None
+    return PortalConfig(
+        virtual_key_id=credentials.virtual_key_id,
+        organization_id=credentials.organization_id,
+        events_url=credentials.events_url,
         portal_url=os.environ.get("KERNO_PORTAL_URL", "").strip() or DEFAULT_PORTAL_URL,
         git_repo=os.environ.get("GITHUB_REPOSITORY", "").strip() or "unknown/unknown",
         git_branch=(
@@ -138,10 +209,10 @@ def _http(method: str, url: str, headers: dict[str, str], body: bytes) -> tuple[
         return error.code, error.read().decode("utf-8", errors="replace")
 
 
-def json_headers(api_key: str) -> dict[str, str]:
+def json_headers(virtual_key_id: str) -> dict[str, str]:
     return {
         "Content-Type": "application/json",
-        VIRTUAL_KEY_HEADER: api_key,
+        VIRTUAL_KEY_HEADER: virtual_key_id,
     }
 
 
@@ -197,7 +268,7 @@ def publish_runs(
         ).encode("utf-8")
         start_url = f"{events_base}/organizations/{config.organization_id}/run-reports"
         try:
-            status, raw = http_post(start_url, json_headers(config.api_key), start_body)
+            status, raw = http_post(start_url, json_headers(config.virtual_key_id), start_body)
         except (OSError, TimeoutError) as error:
             print(f"::warning::could not open a portal run for {endpoint}: {error}")
             continue
@@ -229,7 +300,7 @@ def publish_runs(
             f"{events_base}/organizations/{config.organization_id}/run-reports/{run_report_id}"
         )
         try:
-            finish_status, _ = http_patch(finish_url, json_headers(config.api_key), finish_body)
+            finish_status, _ = http_patch(finish_url, json_headers(config.virtual_key_id), finish_body)
         except (OSError, TimeoutError) as error:
             print(
                 f"::warning::opened {endpoint} as {run_report_id} but could not finish it: {error}"

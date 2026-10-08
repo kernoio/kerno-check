@@ -9,6 +9,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+from fakes import API_KEY, ORGANIZATION_ID, VIRTUAL_KEY_ID, FakeExchange
 from portal import VIRTUAL_KEY_HEADER
 from sync import (
     EXIT_OK,
@@ -246,8 +247,7 @@ class MainTest(unittest.TestCase):
         self.event.write_text(json.dumps({"repository": {"default_branch": "main"}}), encoding="utf-8")
         self.summary = self.root / "summary.md"
         self.env = {
-            "KERNO_API_KEY": "vk-1",
-            "KERNO_ORGANIZATION_ID": "org-1",
+            "KERNO_API_KEY": API_KEY,
             "KERNO_EVENTS_URL": "http://events.test/events-service/",
             "GITHUB_WORKSPACE": str(self.root),
             "GITHUB_EVENT_PATH": str(self.event),
@@ -263,12 +263,14 @@ class MainTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def run_main(self, put: FakePut, **overrides: str) -> tuple[int, str]:
+    def run_main(
+        self, put: FakePut, exchange: FakeExchange | None = None, **overrides: str
+    ) -> tuple[int, str]:
         env = {**self.env, **overrides}
         env = {key: value for key, value in env.items() if value is not None}
         output = io.StringIO()
         with patch.dict(os.environ, env, clear=True), redirect_stdout(output):
-            exit_code = main(http_put=put)
+            exit_code = main(http_put=put, http_post=exchange or FakeExchange())
         return exit_code, output.getvalue()
 
     def test_on_the_default_branch_one_snapshot_is_sent_and_summarised(self) -> None:
@@ -279,8 +281,10 @@ class MainTest(unittest.TestCase):
         self.assertEqual(exit_code, EXIT_OK)
         self.assertEqual(len(put.calls), 1)
         url, headers, body = put.calls[0]
-        self.assertEqual(url, "http://events.test/events-service/organizations/org-1/repo-snapshots")
-        self.assertEqual(headers[VIRTUAL_KEY_HEADER], "vk-1")
+        self.assertEqual(
+            url, f"http://events.test/events-service/organizations/{ORGANIZATION_ID}/repo-snapshots"
+        )
+        self.assertEqual(headers[VIRTUAL_KEY_HEADER], VIRTUAL_KEY_ID)
         self.assertEqual(
             body,
             {
@@ -310,28 +314,42 @@ class MainTest(unittest.TestCase):
     def test_without_credentials_nothing_is_sent(self) -> None:
         put = FakePut()
 
-        exit_code, _ = self.run_main(put, KERNO_API_KEY="", KERNO_ORGANIZATION_ID="")
+        exit_code, _ = self.run_main(put, KERNO_API_KEY="")
 
         self.assertEqual(exit_code, EXIT_OK)
         self.assertEqual(put.calls, [])
         self.assertFalse(self.summary.exists())
 
-    def test_half_the_credentials_is_a_configuration_error(self) -> None:
+    def test_an_organization_without_an_api_key_is_a_configuration_error(self) -> None:
         put = FakePut()
 
-        exit_code, output = self.run_main(put, KERNO_ORGANIZATION_ID="")
+        exit_code, output = self.run_main(put, KERNO_API_KEY="", KERNO_ORGANIZATION_ID=ORGANIZATION_ID)
 
         self.assertEqual(exit_code, EXIT_USAGE)
         self.assertEqual(put.calls, [])
         self.assertIn("::error::", output)
 
-    def test_another_branch_is_never_recorded(self) -> None:
+    def test_a_rejected_api_key_sends_nothing_and_leaves_the_step_green(self) -> None:
         put = FakePut()
 
-        exit_code, output = self.run_main(put, GITHUB_REF="refs/heads/feature", GITHUB_REF_NAME="feature")
+        exit_code, output = self.run_main(put, FakeExchange(status=401, body="{}"))
 
         self.assertEqual(exit_code, EXIT_OK)
         self.assertEqual(put.calls, [])
+        self.assertIn("::warning::Kerno did not accept api-key", output)
+        self.assertFalse(self.summary.exists())
+
+    def test_another_branch_is_never_recorded(self) -> None:
+        put = FakePut()
+        exchange = FakeExchange()
+
+        exit_code, output = self.run_main(
+            put, exchange, GITHUB_REF="refs/heads/feature", GITHUB_REF_NAME="feature"
+        )
+
+        self.assertEqual(exit_code, EXIT_OK)
+        self.assertEqual(put.calls, [])
+        self.assertEqual(exchange.calls, [])
         self.assertIn("only records main", output)
 
     def test_a_tag_or_pull_request_ref_is_never_recorded(self) -> None:
