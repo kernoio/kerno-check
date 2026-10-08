@@ -17,7 +17,7 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
-from portal import DEFAULT_EVENTS_URL, HttpCall, default_http_put, json_headers
+from portal import Credentials, HttpCall, default_http_put, json_headers, load_credentials
 
 EXIT_OK = 0
 EXIT_USAGE = 2
@@ -35,27 +35,6 @@ META_PATH = re.compile(r"""\bpath\s*:\s*(['"`])\s*([A-Za-z]+)\s+(\S[^'"`]*?)\s*\
 
 
 # 1. Does this run record anything?
-
-
-@dataclass(frozen=True)
-class SyncConfig:
-    api_key: str
-    organization_id: str
-    events_url: str
-
-
-def load_sync_config() -> SyncConfig | None:
-    api_key = os.environ.get("KERNO_API_KEY", "").strip()
-    organization_id = os.environ.get("KERNO_ORGANIZATION_ID", "").strip()
-    if not api_key and not organization_id:
-        return None
-    if not api_key or not organization_id:
-        raise ValueError("api-key and organization-id must be set together — one without the other cannot sync")
-    return SyncConfig(
-        api_key=api_key,
-        organization_id=organization_id,
-        events_url=os.environ.get("KERNO_EVENTS_URL", "").strip() or DEFAULT_EVENTS_URL,
-    )
 
 
 def default_branch(event_path: str) -> str | None:
@@ -234,10 +213,12 @@ def build_snapshot(branch: str, discovery: Discovery) -> dict[str, Any]:
     }
 
 
-def send(snapshot: dict[str, Any], config: SyncConfig, http_put: HttpCall) -> dict[str, Any] | None:
-    url = f"{config.events_url.rstrip('/')}/organizations/{config.organization_id}/repo-snapshots"
+def send(snapshot: dict[str, Any], credentials: Credentials, http_put: HttpCall) -> dict[str, Any] | None:
+    url = f"{credentials.events_url.rstrip('/')}/organizations/{credentials.organization_id}/repo-snapshots"
     try:
-        status, raw = http_put(url, json_headers(config.api_key), json.dumps(snapshot).encode("utf-8"))
+        status, raw = http_put(
+            url, json_headers(credentials.virtual_key_id), json.dumps(snapshot).encode("utf-8")
+        )
     except (OSError, TimeoutError) as error:
         print(f"::warning::could not sync the Kerno snapshot: {error}")
         return None
@@ -372,18 +353,17 @@ def write_summary(text: str) -> None:
         print(f"Kerno sync: could not write the step summary ({error})")
 
 
-def main(http_put: HttpCall = default_http_put) -> int:
+def main(http_put: HttpCall = default_http_put, http_post: HttpCall | None = None) -> int:
+    branch = branch_to_record()
+    if branch is None:
+        return EXIT_OK
+
     try:
-        config = load_sync_config()
+        credentials = load_credentials(http_post)
     except ValueError as error:
         print(f"::error::{error}")
         return EXIT_USAGE
-    if config is None:
-        print("Kerno sync: no api-key, so nothing is sent")
-        return EXIT_OK
-
-    branch = branch_to_record()
-    if branch is None:
+    if credentials is None:
         return EXIT_OK
 
     discovery = discover(os.environ.get("GITHUB_WORKSPACE", "").strip() or ".")
@@ -400,7 +380,7 @@ def main(http_put: HttpCall = default_http_put) -> int:
         f"Kerno sync: {len(discovery.endpoints)} endpoints, {discovery.scenario_count} scenarios "
         f"on {branch} @ {_short(snapshot['commitSha'])}"
     )
-    response = send(snapshot, config, http_put)
+    response = send(snapshot, credentials, http_put)
     if response is None:
         return EXIT_OK
 

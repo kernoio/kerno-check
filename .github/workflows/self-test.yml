@@ -124,8 +124,8 @@ jobs:
         if: ${{ always() }}
         run: docker rm -f self-test-sut kerno-check-run 2>/dev/null || true
 
-  # The request sync sends is covered by tests/test_sync.py. This checks the action wiring: sync
-  # needs no SUT, an unreachable events-service never fails the job, and a mistyped mode does.
+  # The requests sync sends are covered by tests/test_sync.py. This checks the action wiring: sync
+  # needs no SUT, an unreachable Kerno never fails the job, and a mistyped mode does.
   self-test-sync:
     needs: validate
     runs-on: ubuntu-latest
@@ -138,12 +138,12 @@ jobs:
         with:
           mode: sync
 
-      - name: Sync against an unreachable events-service
+      - name: Sync against an unreachable Kerno
         uses: ./
         with:
           mode: sync
           api-key: self-test-key
-          organization-id: self-test-org
+          backend-url: http://127.0.0.1:9/
           events-url: http://127.0.0.1:9/events-service/
 
       - name: An unknown mode must be rejected
