@@ -265,7 +265,7 @@ on:
   push:
     branches: [main]
     paths: ['**/.kerno/**']
-  workflow_dispatch:
+  workflow_dispatch: # run once by hand after setup, to send the first snapshot
 
 permissions:
   contents: read
@@ -283,27 +283,42 @@ jobs:
           organization-id: ${{ vars.KERNO_ORGANIZATION_ID }}
 ```
 
-Sync replays nothing and needs no running application. It reads the committed scenarios — for each
-one its endpoint (from the scenario's `meta.path`), its id (the file name), its file path, and its
-title and kind from the `plan.json` beside it — and sends them as that commit's snapshot. Each
-commit is recorded once; running the workflow again for the same commit changes nothing. The job
-summary then lists what the merge changed: endpoints added and removed, and scenarios added and
-removed per endpoint, each linked to the file at that commit.
+Put it in its own file, next to your pull request workflow.
 
-- **Run it once by hand after setting it up** (Actions → kerno-sync → Run workflow). Nothing has
-  merged yet, so this sends the first snapshot.
+### How it works
+
+- **`on: push: branches: [main]`** runs whenever new commits land on main: merge commits, squash
+  merges, rebase merges and direct pushes. The checkout is main's latest commit, so the snapshot is
+  what is on main now — including anything other pull requests merged before it.
+- **It needs no running application and no Docker.** It reads files and sends one request, so it
+  takes seconds.
+- **What it sends:** every committed scenario, with its endpoint (from the scenario's `meta.path`),
+  its id (the file name), its file path, and its title and kind from the `plan.json` beside it.
+  Only scenarios are sent — not `.kerno/memory/` or any other file.
+- **Each commit is recorded once.** Running the workflow again for the same commit changes nothing.
+- **The job summary** lists what the merge changed: endpoints added and removed, and scenarios
+  added and removed per endpoint, each linked to the file at that commit.
+- **`paths`** means a merge that does not touch `.kerno` does not run it, and the last snapshot
+  stays as it was — nothing changed, so there is nothing to record.
+- **`workflow_dispatch`** covers the first sync: nothing has merged yet when you set it up, so run
+  it once by hand (Actions → kerno-sync → Run workflow).
 - **Only the default branch is recorded.** A run on any other branch, or for a pull request, sends
   nothing, so a manual run on a feature branch cannot become the default branch's history.
-- **`paths`** keeps merges that do not touch `.kerno` from running it at all; nothing changed, so
-  there is nothing to record.
-- **Merges made by a workflow using `GITHUB_TOKEN` do not trigger `push` workflows** — a GitHub
-  rule, not this action's. A merge by a person, or by GitHub's auto-merge, does.
-- **Merge queues** are expected to trigger `push` when the queue merges, but this is not yet
-  verified.
-- Without `api-key`, sync sends nothing. A failed request is a warning and never fails the job.
+- **Without `api-key`, sync sends nothing.** A failed request is a warning and never fails the job.
+
+### Edge cases
+
+- **Merges made by a workflow using `GITHUB_TOKEN`** — for example a bot that merges pull requests
+  from inside Actions — do not trigger other workflows, so no snapshot is sent. This is a standard
+  GitHub rule, not this action's. A merge by a person, or by GitHub's own auto-merge, is fine.
+- **Merge queues** are expected to trigger `push` when the queue's final merge lands on main, but
+  this is not yet verified.
+
+### One file instead of two
 
 The pull request check and the sync can share one file, choosing the mode by event. Two files are
 easier to read, because the sync needs none of the application start-up steps:
+
 
 ```yaml
 on:
