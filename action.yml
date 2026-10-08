@@ -7,12 +7,22 @@ branding:
   color: blue
 
 inputs:
+  mode:
+    description: >-
+      `replay` (default) runs the committed scenarios against sut-url and reports them as a check.
+      `sync` runs nothing: on a push to the default branch it sends the committed scenarios to
+      Kerno as that commit's snapshot, so the portal can track the default branch over time, and
+      writes what the merge changed to the job summary. `sync` needs api-key and organization-id
+      and ignores every replay input.
+    required: false
+    default: replay
   sut-url:
     description: >-
       Base URL of your already-running system under test, e.g. http://localhost:8080. Start it in
       an earlier step — this action connects to it and never manages its lifecycle. A localhost or
       127.0.0.1 URL is rewritten to host.docker.internal, because the scenarios execute inside a
-      container and a container's localhost is itself. Required unless `apps` is given.
+      container and a container's localhost is itself. Required in replay mode unless `apps` is
+      given.
     required: false
     default: ""
   app-dir:
@@ -66,9 +76,9 @@ inputs:
     default: "true"
   api-key:
     description: >-
-      Virtual key id used to open a portal run per endpoint after replay. Must be set together
-      with organization-id. Leave both unset to keep the no-account path — no portal URL is
-      printed, and nothing calls events-service.
+      Virtual key id used to open a portal run per endpoint after replay, and to send the snapshot
+      in sync mode. Must be set together with organization-id. Leave both unset to keep the
+      no-account path — no portal URL is printed, and nothing calls events-service.
     required: false
     default: ""
   organization-id:
@@ -114,8 +124,19 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Check mode
+      shell: bash
+      env:
+        KERNO_MODE: ${{ inputs.mode }}
+      run: |
+        case "$KERNO_MODE" in
+          replay|sync) ;;
+          *) echo "::error::mode must be replay or sync, got: $KERNO_MODE"; exit 2 ;;
+        esac
+
     - name: Replay Kerno scenarios
       id: replay
+      if: ${{ inputs.mode == 'replay' }}
       shell: bash
       env:
         KERNO_SUT_URL: ${{ inputs.sut-url }}
@@ -335,6 +356,7 @@ runs:
 
     - name: Read the report
       id: report
+      if: ${{ inputs.mode == 'replay' }}
       shell: bash
       env:
         KERNO_JUNIT_PATH: ${{ steps.replay.outputs.junit-path }}
@@ -349,3 +371,14 @@ runs:
       run: |
         set -euo pipefail
         python3 "$GITHUB_ACTION_PATH/report.py"
+
+    - name: Sync the .kerno snapshot
+      if: ${{ inputs.mode == 'sync' }}
+      shell: bash
+      env:
+        KERNO_API_KEY: ${{ inputs.api-key }}
+        KERNO_ORGANIZATION_ID: ${{ inputs.organization-id }}
+        KERNO_EVENTS_URL: ${{ inputs.events-url }}
+      run: |
+        set -euo pipefail
+        python3 "$GITHUB_ACTION_PATH/sync.py"

@@ -125,6 +125,10 @@ def default_http_patch(url: str, headers: dict[str, str], body: bytes) -> tuple[
     return _http("PATCH", url, headers, body)
 
 
+def default_http_put(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
+    return _http("PUT", url, headers, body)
+
+
 def _http(method: str, url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:

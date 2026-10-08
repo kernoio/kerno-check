@@ -1,0 +1,13 @@
+{
+    "scenarios": [
+        {
+            "id": "fixture_pass",
+            "status": "keep",
+            "spec": {
+                "id": "fixture_pass",
+                "title": "GET / answers 200 with status ok",
+                "kind": "happy_path"
+            }
+        }
+    ]
+}

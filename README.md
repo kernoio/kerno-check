@@ -253,11 +253,86 @@ One report is written per application, so `report-path` is a directory in this m
 `mikepenz/action-junit-report` takes a glob, so `report_paths: kerno-reports/*.xml` picks them all
 up. The `total`/`passed`/`failed`/`skipped` outputs are summed across every application.
 
+## Tracking the default branch
+
+The pull request check covers one branch. To let the Kerno portal show how your default branch's
+test suite grows over time, add `mode: sync` in its own workflow that runs after every merge:
+
+```yaml
+name: kerno-sync
+
+on:
+  push:
+    branches: [main]
+    paths: ['**/.kerno/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: kernoio/kerno-check@v1
+        with:
+          mode: sync
+          api-key: ${{ secrets.KERNO_API_KEY }}
+          organization-id: ${{ vars.KERNO_ORGANIZATION_ID }}
+```
+
+Sync replays nothing and needs no running application. It reads the committed scenarios — for each
+one its endpoint (from the scenario's `meta.path`), its id (the file name), its file path, and its
+title and kind from the `plan.json` beside it — and sends them as that commit's snapshot. Each
+commit is recorded once; running the workflow again for the same commit changes nothing. The job
+summary then lists what the merge changed: endpoints added and removed, and scenarios added and
+removed per endpoint, each linked to the file at that commit.
+
+- **Run it once by hand after setting it up** (Actions → kerno-sync → Run workflow). Nothing has
+  merged yet, so this sends the first snapshot.
+- **Only the default branch is recorded.** A run on any other branch, or for a pull request, sends
+  nothing, so a manual run on a feature branch cannot become the default branch's history.
+- **`paths`** keeps merges that do not touch `.kerno` from running it at all; nothing changed, so
+  there is nothing to record.
+- **Merges made by a workflow using `GITHUB_TOKEN` do not trigger `push` workflows** — a GitHub
+  rule, not this action's. A merge by a person, or by GitHub's auto-merge, does.
+- **Merge queues** are expected to trigger `push` when the queue merges, but this is not yet
+  verified.
+- Without `api-key`, sync sends nothing. A failed request is a warning and never fails the job.
+
+The pull request check and the sync can share one file, choosing the mode by event. Two files are
+easier to read, because the sync needs none of the application start-up steps:
+
+```yaml
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths: ['**/.kerno/**']
+
+jobs:
+  kerno:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - if: github.event_name == 'pull_request'
+        run: docker compose up -d --wait
+      - uses: kernoio/kerno-check@v1
+        with:
+          mode: ${{ github.event_name == 'pull_request' && 'replay' || 'sync' }}
+          sut-url: http://localhost:8080
+          api-key: ${{ secrets.KERNO_API_KEY }}
+          organization-id: ${{ vars.KERNO_ORGANIZATION_ID }}
+```
+
 ## Inputs
 
 | Input | Required | Default | |
 |-------|----------|---------|-|
-| `sut-url` | unless `apps` | | Base URL of your running application. A `localhost` URL is rewritten to `host.docker.internal`, since scenarios execute inside a container. |
+| `mode` | no | `replay` | `replay` runs the scenarios as a check. `sync` sends the default branch's committed scenarios to Kerno after a merge — see [Tracking the default branch](#tracking-the-default-branch). |
+| `sut-url` | in replay, unless `apps` | | Base URL of your running application. A `localhost` URL is rewritten to `host.docker.internal`, since scenarios execute inside a container. |
 | `app-dir` | no | *(repository root)* | Replay one application's scenarios. Unset discovers every `<app>/.kerno/scenarios` tree — what a monorepo usually wants. All discovered apps are replayed against the same `sut-url`. |
 | `scenarios` | no | *(all)* | Glob filter on the path relative to the scenarios directory, e.g. `endpoints/GET/**`. `*` stays within a segment, `**` crosses them. |
 | `image` | no | *(pinned digest)* | The runner image. Pinned by digest so a given version of this action always runs the same code. |
@@ -265,7 +340,7 @@ up. The `total`/`passed`/`failed`/`skipped` outputs are summed across every appl
 | `forward-env` | no | | Environment variable names to pass through to the scenarios, one per line, with values from this step's own `env:`. Only the names listed are forwarded. A name with no value fails the step before the container starts. |
 | `report-path` | no | `kerno-junit.xml` | Where the JUnit XML lands. With `apps` this is a **directory**, since the runner writes one report per application. |
 | `fail-on-failure` | no | `true` | Set `false` to report without gating. |
-| `api-key` | no | | Virtual key id. Together with `organization-id`, opens a portal run per endpoint and prints the URL. Leave both unset for the no-account path. |
+| `api-key` | no | | Virtual key id. Together with `organization-id`, opens a portal run per endpoint and prints the URL, or sends the snapshot in `sync` mode. Leave both unset for the no-account path. |
 | `organization-id` | no | | Organization the portal runs belong to. Must be set with `api-key`. |
 | `events-url` | no | *(production)* | Events-service base URL. Override for development. |
 | `portal-url` | no | *(production)* | Portal base URL used to build the printed links. Override for development. |
