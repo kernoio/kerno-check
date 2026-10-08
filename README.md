@@ -259,6 +259,11 @@ One report is written per application, so `report-path` is a directory in this m
 `mikepenz/action-junit-report` takes a glob, so `report_paths: kerno-reports/*.xml` picks them all
 up. The `total`/`passed`/`failed`/`skipped` outputs are summed across every application.
 
+The same holds when a monorepo's services share one URL and you leave `app-dir` unset: discovery
+replays every `<app>/.kerno/scenarios` tree it finds, and `report-path` is a directory whenever it
+finds more than one. Using the glob covers both cases, so a repository that grows a second
+application does not need its workflow changed.
+
 ## Tracking the default branch
 
 The pull request check covers one branch. To let the Kerno portal show how your default branch's
@@ -365,7 +370,7 @@ jobs:
 | `image` | no | *(pinned digest)* | The runner image. Pinned by digest so a given version of this action always runs the same code. |
 | `apps` | no | | One `<dir>=<url>` per line, for a monorepo whose services listen on different ports. Each application is replayed against its own URL. Mutually exclusive with `sut-url` and `app-dir`. |
 | `forward-env` | no | | Environment variable names to pass through to the scenarios, one per line, with values from this step's own `env:`. Only the names listed are forwarded. A name with no value fails the step before the container starts. |
-| `report-path` | no | `kerno-junit.xml` | Where the JUnit XML lands. With `apps` this is a **directory**, since the runner writes one report per application. |
+| `report-path` | no | `kerno-junit.xml` | Where the JUnit XML lands. A **directory** with `apps`, or when discovery finds more than one application, since the runner writes one report per application. |
 | `fail-on-failure` | no | `true` | Set `false` to report without gating. |
 | `api-key` | no | | Your API key from Settings → API key, as a secret. Opens a portal run per endpoint and prints the URL, or sends the snapshot in `sync` mode. Leave unset for the no-account path. A key Kerno does not accept is a warning, not a failed step. |
 | `organization-id` | no | *(the key's)* | Only for a key that belongs to several organizations. An error without `api-key`. |

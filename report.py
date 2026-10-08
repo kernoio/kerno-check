@@ -129,8 +129,9 @@ def main() -> int:
         print(f"::error::the Kerno runner could not start (exit {replay_exit}) — see the log above")
         return int(replay_exit)
 
-    # One file for a single application; a DIRECTORY of them when `apps` replayed several, since
-    # the driver writes one report per application and refuses to collapse them into one file.
+    # One file for a single application; a DIRECTORY of them when several were replayed — whether
+    # named by `apps` or found by discovery — since the driver writes one report per application
+    # and refuses to collapse them into one file.
     if junit_path and os.path.isdir(junit_path):
         reports = sorted(
             os.path.join(junit_path, name)
