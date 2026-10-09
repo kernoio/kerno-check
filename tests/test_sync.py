@@ -157,6 +157,51 @@ class DiscoverTest(unittest.TestCase):
         self.assertEqual(discovery.scenario_count, 1)
         self.assertEqual(discovery.duplicates, ["app/.kerno/scenarios/endpoints/GET/app/a/happy_path.scenario.ts"])
 
+    def test_flows_are_keyed_by_the_id_in_flow_json_and_carry_their_scenarios(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            checkout = "apps/shop/.kerno/scenarios/flows/checkout"
+            write(root, f"{checkout}/flow.json", json.dumps({"id": "checkout", "description": "Buy", "steps": []}))
+            write(root, f"{checkout}/plan.json", plan(("paid_twice", "Pays once", "edge_case")))
+            write(root, f"{checkout}/happy_path.scenario.ts", "export default function scenario() {}\n")
+            write(root, f"{checkout}/paid_twice.scenario.ts", "export default function scenario() {}\n")
+            write(root, f"{checkout}/preconditions.ts", "export const x = 1\n")
+            write(root, "apps/shop/.kerno/scenarios/flows/refund/flow.json", "not json")
+            write(root, "apps/shop/.kerno/scenarios/flows/refund/happy_path.scenario.ts", "export default 1\n")
+            write(root, "apps/shop/.kerno/scenarios/flows/sign-up/flow.json", json.dumps({"id": "sign-up"}))
+
+            discovery = discover(tmp)
+
+        self.assertEqual(discovery.endpoints, [])
+        self.assertEqual(discovery.unreadable, [])
+        self.assertEqual(
+            discovery.flows,
+            [
+                {
+                    "contentRoot": "apps/shop",
+                    "flowId": "checkout",
+                    "scenarios": [
+                        {"id": "happy_path", "filePath": f"{checkout}/happy_path.scenario.ts", "title": None, "kind": None},
+                        {"id": "paid_twice", "filePath": f"{checkout}/paid_twice.scenario.ts", "title": "Pays once", "kind": "edge_case"},
+                    ],
+                },
+                {
+                    "contentRoot": "apps/shop",
+                    "flowId": "refund",
+                    "scenarios": [
+                        {
+                            "id": "happy_path",
+                            "filePath": "apps/shop/.kerno/scenarios/flows/refund/happy_path.scenario.ts",
+                            "title": None,
+                            "kind": None,
+                        }
+                    ],
+                },
+            ],
+        )
+        self.assertEqual(discovery.flow_scenario_count, 3)
+        self.assertEqual(discovery.scenario_count, 3)
+
     def test_a_scenario_without_a_readable_meta_path_is_left_out_and_reported(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -223,6 +268,49 @@ class FormatSummaryTest(unittest.TestCase):
         self.assertIn("−[Stale one](https://github.com/o/r/blob/abc1234567/app/.kerno/stale.scenario.ts)", text)
         self.assertIn("`POST /kept` (app) (1 → 1)", text)
 
+    def test_flow_totals_and_changes_are_listed_next_to_endpoints(self) -> None:
+        previous = {"commitSha": "abc1234567", "endpointCount": 1, "scenarioCount": 1, "flowCount": 1, "flowScenarioCount": 1}
+        checkout = {
+            "contentRoot": "app",
+            "flowId": "checkout",
+            "scenarios": [{"id": "happy_path", "filePath": "app/.kerno/scenarios/flows/checkout/happy_path.scenario.ts", "title": "Buys"}],
+        }
+        changes = {
+            "addedFlows": [checkout],
+            "removedFlows": [{"contentRoot": "app", "flowId": "refund", "scenarios": [{"id": "old", "filePath": "r/old.scenario.ts"}]}],
+            "changedFlows": [
+                {
+                    "contentRoot": "app",
+                    "flowId": "sign-up",
+                    "fromScenarioCount": 1,
+                    "toScenarioCount": 2,
+                    "addedScenarios": [{"id": "fresh", "filePath": "s/fresh.scenario.ts"}],
+                    "removedScenarios": [],
+                }
+            ],
+        }
+        response = sync_response(previous, changes, [endpoint("/a", "x")])
+        response["snapshot"]["flows"] = [checkout, {"contentRoot": "app", "flowId": "sign-up", "scenarios": [{}, {}]}]
+
+        with patch.dict(os.environ, {"GITHUB_SERVER_URL": "https://github.com"}):
+            text = format_summary(response, "o/r")
+
+        self.assertIn("**1** endpoints · **1** scenarios · **2** flows · **3** flow scenarios", text)
+        self.assertIn("+0 endpoints, +0 scenarios, +1 flows, +2 flow scenarios since `abc1234`", text)
+        self.assertIn("#### Added flows", text)
+        self.assertIn(
+            "- `checkout` (app): [Buys](https://github.com/o/r/blob/def4567890/app/.kerno/scenarios/flows/checkout/happy_path.scenario.ts)",
+            text,
+        )
+        self.assertIn("#### Removed flows", text)
+        self.assertIn("- `sign-up` (app) (1 → 2): +[fresh]", text)
+
+    def test_a_repo_without_flows_lists_none(self) -> None:
+        previous = {"commitSha": "abc1234567", "endpointCount": 1, "scenarioCount": 1}
+        text = format_summary(sync_response(previous, {}, [endpoint("/a", "x")]), "o/r")
+
+        self.assertNotIn("flows", text)
+
     def test_no_changes_says_so(self) -> None:
         previous = {"commitSha": "abc1234567", "endpointCount": 1, "scenarioCount": 1}
         text = format_summary(sync_response(previous, {}, [endpoint("/a", "x")]), "o/r")
@@ -243,6 +331,8 @@ class MainTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         write(self.root, "app/.kerno/scenarios/endpoints/GET/a/happy_path.scenario.ts", scenario_source("GET /a"))
+        write(self.root, "app/.kerno/scenarios/flows/checkout/flow.json", json.dumps({"id": "checkout"}))
+        write(self.root, "app/.kerno/scenarios/flows/checkout/happy_path.scenario.ts", "export default 1\n")
         self.event = self.root / "event.json"
         self.event.write_text(json.dumps({"repository": {"default_branch": "main"}}), encoding="utf-8")
         self.summary = self.root / "summary.md"
@@ -301,6 +391,20 @@ class MainTest(unittest.TestCase):
                             {
                                 "id": "happy_path",
                                 "filePath": "app/.kerno/scenarios/endpoints/GET/a/happy_path.scenario.ts",
+                                "title": None,
+                                "kind": None,
+                            }
+                        ],
+                    }
+                ],
+                "flows": [
+                    {
+                        "contentRoot": "app",
+                        "flowId": "checkout",
+                        "scenarios": [
+                            {
+                                "id": "happy_path",
+                                "filePath": "app/.kerno/scenarios/flows/checkout/happy_path.scenario.ts",
                                 "title": None,
                                 "kind": None,
                             }

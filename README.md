@@ -309,10 +309,11 @@ On a pull request it replays; on a push to main, or a run by hand, it syncs.
   takes seconds. The start-up step only runs for pull requests.
 - **What it sends:** every committed scenario, with its endpoint (from the scenario's `meta.path`),
   its id (the file name), its file path, and its title and kind from the `plan.json` beside it.
-  Only scenarios are sent — not `.kerno/memory/` or any other file.
+  Flow scenarios under `.kerno/scenarios/flows/<flow>/` are sent under their flow's id (from its
+  `flow.json`, or the folder name). Only scenarios are sent — not `.kerno/memory/` or any other file.
 - **Each commit is recorded once.** Running the workflow again for the same commit changes nothing.
-- **The job summary** lists what the merge changed: endpoints added and removed, and scenarios
-  added and removed per endpoint, each linked to the file at that commit.
+- **The job summary** lists what the merge changed: endpoints and flows added and removed, and
+  scenarios added and removed per endpoint or flow, each linked to the file at that commit.
 - **`paths`** means a merge that does not touch `.kerno` does not run it, and the last snapshot
   stays as it was — nothing changed, so there is nothing to record.
 - **`workflow_dispatch`** covers the first sync: nothing has merged yet when you set it up, so run
