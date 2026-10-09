@@ -25,6 +25,7 @@ EXIT_USAGE = 2
 KERNO_DIR = ".kerno"
 SCENARIO_SUFFIX = ".scenario.ts"
 PLAN_FILE = "plan.json"
+FLOW_FILE = "flow.json"
 SKIPPED_DIRS = {".git", "node_modules"}
 MAX_SCENARIOS = 20000
 MAX_LISTED = 20
@@ -76,12 +77,17 @@ def branch_to_record() -> str | None:
 @dataclass(frozen=True)
 class Discovery:
     endpoints: list[dict[str, Any]]
+    flows: list[dict[str, Any]]
     unreadable: list[str]
     duplicates: list[str]
 
     @property
+    def flow_scenario_count(self) -> int:
+        return sum(len(flow["scenarios"]) for flow in self.flows)
+
+    @property
     def scenario_count(self) -> int:
-        return sum(len(endpoint["scenarios"]) for endpoint in self.endpoints)
+        return sum(len(endpoint["scenarios"]) for endpoint in self.endpoints) + self.flow_scenario_count
 
 
 def parse_meta_path(source: str) -> tuple[str, str] | None:
@@ -113,14 +119,38 @@ def load_plan(directory: str) -> dict[str, tuple[str | None, str | None]]:
     return details
 
 
+def load_flow_id(directory: str) -> str | None:
+    try:
+        with open(os.path.join(directory, FLOW_FILE), encoding="utf-8") as handle:
+            flow = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return None
+    return _text_or_none(flow.get("id")) if isinstance(flow, dict) else None
+
+
 def discover(workspace: str) -> Discovery:
     grouped: dict[tuple[str, str, str], dict[str, dict[str, Any]]] = {}
+    grouped_flows: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
     unreadable: list[str] = []
     duplicates: list[str] = []
 
     for kerno_dir in _kerno_dirs(workspace):
         content_root = _relative(os.path.dirname(kerno_dir), workspace)
-        for directory, files in _scenario_dirs(kerno_dir):
+        for flow_dir in _flow_dirs(kerno_dir):
+            flow_id = (load_flow_id(flow_dir) or os.path.basename(flow_dir)).strip()
+            scenarios = grouped_flows.setdefault((content_root, flow_id), {})
+            for directory, files in _scenario_files(flow_dir):
+                plan = load_plan(directory)
+                for name in files:
+                    file_path = _relative(os.path.join(directory, name), workspace)
+                    scenario_id = name[: -len(SCENARIO_SUFFIX)]
+                    if scenario_id in scenarios:
+                        duplicates.append(file_path)
+                        continue
+                    title, kind = plan.get(scenario_id, (None, None))
+                    scenarios[scenario_id] = {"id": scenario_id, "filePath": file_path, "title": title, "kind": kind}
+
+        for directory, files in _scenario_files(os.path.join(kerno_dir, "scenarios", "endpoints")):
             plan = load_plan(directory)
             for name in files:
                 file_path = _relative(os.path.join(directory, name), workspace)
@@ -147,7 +177,16 @@ def discover(workspace: str) -> Discovery:
         }
         for (content_root, method, url_path), scenarios in sorted(grouped.items())
     ]
-    return Discovery(endpoints=endpoints, unreadable=unreadable, duplicates=duplicates)
+    flows = [
+        {
+            "contentRoot": content_root,
+            "flowId": flow_id,
+            "scenarios": [scenarios[scenario_id] for scenario_id in sorted(scenarios)],
+        }
+        for (content_root, flow_id), scenarios in sorted(grouped_flows.items())
+        if scenarios
+    ]
+    return Discovery(endpoints=endpoints, flows=flows, unreadable=unreadable, duplicates=duplicates)
 
 
 def _kerno_dirs(workspace: str) -> list[str]:
@@ -160,9 +199,18 @@ def _kerno_dirs(workspace: str) -> list[str]:
     return found
 
 
-def _scenario_dirs(kerno_dir: str) -> list[tuple[str, list[str]]]:
+def _flow_dirs(kerno_dir: str) -> list[str]:
+    flows_dir = os.path.join(kerno_dir, "scenarios", "flows")
+    try:
+        names = sorted(os.listdir(flows_dir))
+    except OSError:
+        return []
+    return [os.path.join(flows_dir, name) for name in names if os.path.isdir(os.path.join(flows_dir, name))]
+
+
+def _scenario_files(top: str) -> list[tuple[str, list[str]]]:
     found = []
-    for directory, dirs, files in os.walk(os.path.join(kerno_dir, "scenarios", "endpoints")):
+    for directory, dirs, files in os.walk(top):
         dirs.sort()
         scenario_files = sorted(name for name in files if name.endswith(SCENARIO_SUFFIX))
         if scenario_files:
@@ -196,7 +244,7 @@ def report_left_out(discovery: Discovery) -> None:
     if discovery.duplicates:
         print(
             f"::warning::{len(discovery.duplicates)} scenario file(s) repeat an id already found for the same "
-            f"endpoint and were left out: {', '.join(discovery.duplicates[:MAX_NAMED_FILES])}"
+            f"endpoint or flow and were left out: {', '.join(discovery.duplicates[:MAX_NAMED_FILES])}"
         )
 
 
@@ -210,6 +258,7 @@ def build_snapshot(branch: str, discovery: Discovery) -> dict[str, Any]:
         "commitSha": os.environ["GITHUB_SHA"].strip(),
         "runUrl": _run_url(),
         "endpoints": discovery.endpoints,
+        "flows": discovery.flows,
     }
 
 
@@ -254,7 +303,13 @@ def format_summary(response: dict[str, Any], repository: str) -> str:
     endpoints = snapshot.get("endpoints") or []
     endpoint_count = len(endpoints)
     scenario_count = sum(len(endpoint.get("scenarios") or []) for endpoint in endpoints)
+    flows = snapshot.get("flows") or []
+    flow_count = len(flows)
+    flow_scenario_count = sum(len(flow.get("scenarios") or []) for flow in flows)
+    lists_flows = bool(flows) or bool(previous and previous.get("flowCount"))
     totals = f"**{endpoint_count}** endpoints · **{scenario_count}** scenarios"
+    if lists_flows:
+        totals += f" · **{flow_count}** flows · **{flow_scenario_count}** flow scenarios"
 
     lines = [f"### Kerno · {branch} @ `{_short(sha)}`", ""]
     if not previous:
@@ -264,16 +319,21 @@ def format_summary(response: dict[str, Any], repository: str) -> str:
     previous_sha = str(previous.get("commitSha") or "")
     endpoint_delta = endpoint_count - int(previous.get("endpointCount") or 0)
     scenario_delta = scenario_count - int(previous.get("scenarioCount") or 0)
-    lines.append(
-        f"{totals} — {_signed(endpoint_delta)} endpoints, {_signed(scenario_delta)} scenarios "
-        f"since `{_short(previous_sha)}`."
-    )
+    deltas = f"{_signed(endpoint_delta)} endpoints, {_signed(scenario_delta)} scenarios"
+    if lists_flows:
+        flow_delta = flow_count - int(previous.get("flowCount") or 0)
+        flow_scenario_delta = flow_scenario_count - int(previous.get("flowScenarioCount") or 0)
+        deltas += f", {_signed(flow_delta)} flows, {_signed(flow_scenario_delta)} flow scenarios"
+    lines.append(f"{totals} — {deltas} since `{_short(previous_sha)}`.")
 
     links = _Links(repository=repository, current_sha=sha, previous_sha=previous_sha)
     sections = [
         _section("Added endpoints", [_endpoint_row(e, links.current) for e in changes.get("added") or []]),
         _section("Removed endpoints", [_endpoint_row(e, links.previous) for e in changes.get("removed") or []]),
         _section("Changed endpoints", [_changed_row(e, links) for e in changes.get("changed") or []]),
+        _section("Added flows", [_endpoint_row(f, links.current) for f in changes.get("addedFlows") or []]),
+        _section("Removed flows", [_endpoint_row(f, links.previous) for f in changes.get("removedFlows") or []]),
+        _section("Changed flows", [_changed_row(f, links) for f in changes.get("changedFlows") or []]),
     ]
     sections = [section for section in sections if section]
     if not sections:
@@ -325,7 +385,10 @@ def _section(title: str, rows: list[str]) -> list[str]:
 
 
 def _endpoint_label(endpoint: dict[str, Any]) -> str:
-    label = f"`{endpoint.get('method', '?')} {endpoint.get('urlPath', '?')}`"
+    if "flowId" in endpoint:
+        label = f"`{endpoint.get('flowId') or '?'}`"
+    else:
+        label = f"`{endpoint.get('method', '?')} {endpoint.get('urlPath', '?')}`"
     content_root = endpoint.get("contentRoot")
     return f"{label} ({content_root})" if content_root else label
 
@@ -377,8 +440,8 @@ def main(http_put: HttpCall = default_http_put, http_post: HttpCall | None = Non
 
     snapshot = build_snapshot(branch, discovery)
     print(
-        f"Kerno sync: {len(discovery.endpoints)} endpoints, {discovery.scenario_count} scenarios "
-        f"on {branch} @ {_short(snapshot['commitSha'])}"
+        f"Kerno sync: {len(discovery.endpoints)} endpoints, {len(discovery.flows)} flows, "
+        f"{discovery.scenario_count} scenarios on {branch} @ {_short(snapshot['commitSha'])}"
     )
     response = send(snapshot, credentials, http_put)
     if response is None:
