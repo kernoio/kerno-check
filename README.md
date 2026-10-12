@@ -3,6 +3,63 @@
 Replay your committed Kerno scenarios against a running system under test, and report them as a
 pull-request check.
 
+One workflow file does both jobs Kerno needs from CI: it replays the scenarios on every pull
+request, and after a merge that changes `.kerno` it sends the default branch's scenarios to the
+portal. This is the file the portal's Integrations page hands out:
+
+```yaml
+name: kerno
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths: ['**/.kerno/**']
+  workflow_dispatch: # run once by hand after setup, to send the first snapshot
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  kerno:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Your application. Start it however you already do —
+      # this action only connects to it.
+      - if: github.event_name == 'pull_request'
+        run: docker compose up -d --wait
+
+      - uses: kernoio/kerno-check@v1
+        with:
+          mode: ${{ github.event_name == 'pull_request' && 'replay' || 'sync' }}
+          sut-url: http://localhost:8080
+          api-key: ${{ secrets.KERNO_API_KEY }}
+
+      # Per-scenario detail in the Checks tab.
+      - if: always() && github.event_name == 'pull_request'
+        uses: mikepenz/action-junit-report@v6
+        with:
+          report_paths: kerno-junit.xml
+          comment: false
+```
+
+Add `KERNO_API_KEY` as a repository secret — see [Secrets and variables](#secrets-and-variables).
+The sync is filtered by `paths`: it runs after merges that touch `.kerno`, not after every merge.
+[Tracking the default branch](#tracking-the-default-branch) explains how it works.
+
+Keep `permissions:` even if your repository's default token can write. Where the default
+`GITHUB_TOKEN` is read-only, a missing `pull-requests: write` means the PR comment never lands,
+and the action only warns — the check stays green and nobody notices.
+
+### Without a Kerno account
+
+Replay alone needs no account, no API key and no agent. Drop `push`, `workflow_dispatch`, `mode`
+and `api-key`:
+
 ```yaml
 name: kerno
 
@@ -19,9 +76,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # Your application. Start it however you already do — this action only connects to it.
       - run: docker compose up -d --wait
-      - run: ./scripts/wait-for-ready.sh
 
       - uses: kernoio/kerno-check@v1
         with:
@@ -34,8 +89,8 @@ jobs:
           comment: false
 ```
 
-No Kerno account, no API key, no agent — unless you opt in to portal links. The action
-pulls one public image and runs the scenarios already committed to your repository.
+The action pulls one public image and runs the scenarios already committed to your repository.
+Nothing calls home, and the PR comment is the totals only.
 
 ## What it does, and what it does not
 
@@ -108,8 +163,9 @@ Create one secret on the repository (Settings → Secrets and variables → Acti
 | `KERNO_API_KEY` | **secret** | Your API key, from Settings → API key in the Kerno portal. |
 
 The action checks the key with Kerno once per run and learns your organization from it, so there
-is nothing else to configure. Leave it unset for the no-account path: replay still runs, the
-comment is only the totals, and nothing calls home.
+is nothing else to configure. Leave it unset for the
+[no-account path](#without-a-kerno-account): replay still runs, the comment is only the totals,
+and nothing calls home.
 
 The key is yours, not the organization's: other members never see it. If you leave the
 organization or delete the key, Kerno stops receiving data from this repository — the job stays
@@ -262,38 +318,9 @@ up. The `total`/`passed`/`failed`/`skipped` outputs are summed across every appl
 ## Tracking the default branch
 
 The pull request check covers one branch. To let the Kerno portal show how your default branch's
-test suite grows over time, the same workflow also runs `mode: sync` after every merge. One file
-does both, choosing the mode by event:
-
-```yaml
-name: kerno
-
-on:
-  pull_request:
-  push:
-    branches: [main]
-    paths: ['**/.kerno/**']
-  workflow_dispatch: # run once by hand after setup, to send the first snapshot
-
-jobs:
-  kerno:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      # Your application. Start it however you already do —
-      # this action only connects to it.
-      - if: github.event_name == 'pull_request'
-        run: docker compose up -d --wait
-
-      - uses: kernoio/kerno-check@v1
-        with:
-          mode: ${{ github.event_name == 'pull_request' && 'replay' || 'sync' }}
-          sut-url: http://localhost:8080
-          api-key: ${{ secrets.KERNO_API_KEY }}
-```
-
-On a pull request it replays; on a push to main, or a run by hand, it syncs.
+test suite grows over time, the [workflow at the top](#kerno-check) also runs `mode: sync` after
+merges to main that touch `.kerno` — not after every merge. One file does both, choosing the mode
+by event: on a pull request it replays; on a push to main, or a run by hand, it syncs.
 
 ### How it works
 
