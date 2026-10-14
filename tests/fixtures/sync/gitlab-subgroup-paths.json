@@ -1,0 +1,111 @@
+{
+  "description": "Apps several folders deep, as in GitLab subgroups, an app nested inside another, spaces, dots, upper case and non-ASCII folder names; ordering is by code point.",
+  "files": {
+    "platform/backend/billing-api/.kerno/scenarios/endpoints/GET/invoices/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /invoices',\n  path: 'GET /invoices',\n}\n\nexport default function scenario() {}\n",
+    "platform/backend/billing-api/workers/reconciler/.kerno/scenarios/endpoints/POST/reconcile/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /reconcile',\n  path: 'POST /reconcile',\n}\n\nexport default function scenario() {}\n",
+    "platform/backend/billing-api/workers/reconciler/.kerno/scenarios/flows/nightly-run/nightly.scenario.ts": "export default async function scenario() {}\n",
+    "platform/Accounts/Ledger/.kerno/scenarios/endpoints/GET/entries/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /entries',\n  path: 'GET /entries',\n}\n\nexport default function scenario() {}\n",
+    "platform/équipe/catalogue/.kerno/scenarios/endpoints/GET/items/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /items',\n  path: 'GET /items',\n}\n\nexport default function scenario() {}\n",
+    "platform/zeta/catalogue/.kerno/scenarios/endpoints/GET/items/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /items',\n  path: 'GET /items',\n}\n\nexport default function scenario() {}\n",
+    "group/sub.group/my project/.kerno/scenarios/endpoints/GET/my items/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks items',\n  path: 'GET /my items',\n}\n\nexport default function scenario() {}\n"
+  },
+  "expected": {
+    "endpoints": [
+      {
+        "contentRoot": "group/sub.group/my project",
+        "method": "GET",
+        "urlPath": "/my items",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "group/sub.group/my project/.kerno/scenarios/endpoints/GET/my items/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "platform/Accounts/Ledger",
+        "method": "GET",
+        "urlPath": "/entries",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "platform/Accounts/Ledger/.kerno/scenarios/endpoints/GET/entries/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "platform/backend/billing-api",
+        "method": "GET",
+        "urlPath": "/invoices",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "platform/backend/billing-api/.kerno/scenarios/endpoints/GET/invoices/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "platform/backend/billing-api/workers/reconciler",
+        "method": "POST",
+        "urlPath": "/reconcile",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "platform/backend/billing-api/workers/reconciler/.kerno/scenarios/endpoints/POST/reconcile/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "platform/zeta/catalogue",
+        "method": "GET",
+        "urlPath": "/items",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "platform/zeta/catalogue/.kerno/scenarios/endpoints/GET/items/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "platform/équipe/catalogue",
+        "method": "GET",
+        "urlPath": "/items",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "platform/équipe/catalogue/.kerno/scenarios/endpoints/GET/items/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      }
+    ],
+    "flows": [
+      {
+        "contentRoot": "platform/backend/billing-api/workers/reconciler",
+        "flowId": "nightly-run",
+        "scenarios": [
+          {
+            "id": "nightly",
+            "filePath": "platform/backend/billing-api/workers/reconciler/.kerno/scenarios/flows/nightly-run/nightly.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      }
+    ],
+    "unreadable": [],
+    "duplicates": [],
+    "misplaced": []
+  }
+}
