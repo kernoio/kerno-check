@@ -1,0 +1,72 @@
+{
+  "description": ".git and node_modules are skipped only on the way to a .kerno folder; inside one every folder counts, and a .kerno inside a .kerno belongs to the outer one.",
+  "files": {
+    "app/.kerno/scenarios/endpoints/GET/a/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /a',\n  path: 'GET /a',\n}\n\nexport default function scenario() {}\n",
+    "app/node_modules/pkg/.kerno/scenarios/endpoints/GET/vendored/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /vendored',\n  path: 'GET /vendored',\n}\n\nexport default function scenario() {}\n",
+    "node_modules/.kerno/scenarios/endpoints/GET/b/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /b',\n  path: 'GET /b',\n}\n\nexport default function scenario() {}\n",
+    ".git/modules/sub/.kerno/scenarios/endpoints/GET/c/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /c',\n  path: 'GET /c',\n}\n\nexport default function scenario() {}\n",
+    "app/.kerno/scenarios/endpoints/GET/node_modules/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /node_modules',\n  path: 'GET /node_modules',\n}\n\nexport default function scenario() {}\n",
+    "app/.kerno/scenarios/endpoints/GET/legacy/.kerno/scenarios/endpoints/GET/d/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /d',\n  path: 'GET /d',\n}\n\nexport default function scenario() {}\n",
+    "app/.kerno/scenarios/endpoints/GET/legacy/.git/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /legacy',\n  path: 'GET /legacy',\n}\n\nexport default function scenario() {}\n"
+  },
+  "expected": {
+    "endpoints": [
+      {
+        "contentRoot": "app",
+        "method": "GET",
+        "urlPath": "/a",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "app/.kerno/scenarios/endpoints/GET/a/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "method": "GET",
+        "urlPath": "/d",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "app/.kerno/scenarios/endpoints/GET/legacy/.kerno/scenarios/endpoints/GET/d/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "method": "GET",
+        "urlPath": "/legacy",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "app/.kerno/scenarios/endpoints/GET/legacy/.git/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "method": "GET",
+        "urlPath": "/node_modules",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "app/.kerno/scenarios/endpoints/GET/node_modules/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      }
+    ],
+    "flows": [],
+    "unreadable": [],
+    "duplicates": [],
+    "misplaced": []
+  }
+}

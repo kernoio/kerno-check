@@ -80,6 +80,7 @@ class Discovery:
     flows: list[dict[str, Any]]
     unreadable: list[str]
     duplicates: list[str]
+    misplaced: list[str]
 
     @property
     def flow_scenario_count(self) -> int:
@@ -133,6 +134,7 @@ def discover(workspace: str) -> Discovery:
     grouped_flows: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
     unreadable: list[str] = []
     duplicates: list[str] = []
+    misplaced: list[str] = []
 
     for kerno_dir in _kerno_dirs(workspace):
         content_root = _relative(os.path.dirname(kerno_dir), workspace)
@@ -168,6 +170,8 @@ def discover(workspace: str) -> Discovery:
                 title, kind = plan.get(scenario_id, (None, None))
                 scenarios[scenario_id] = {"id": scenario_id, "filePath": file_path, "title": title, "kind": kind}
 
+        misplaced.extend(_misplaced_scenarios(kerno_dir, workspace))
+
     endpoints = [
         {
             "contentRoot": content_root,
@@ -186,7 +190,9 @@ def discover(workspace: str) -> Discovery:
         for (content_root, flow_id), scenarios in sorted(grouped_flows.items())
         if scenarios
     ]
-    return Discovery(endpoints=endpoints, flows=flows, unreadable=unreadable, duplicates=duplicates)
+    return Discovery(
+        endpoints=endpoints, flows=flows, unreadable=unreadable, duplicates=duplicates, misplaced=misplaced
+    )
 
 
 def _kerno_dirs(workspace: str) -> list[str]:
@@ -218,6 +224,17 @@ def _scenario_files(top: str) -> list[tuple[str, list[str]]]:
     return found
 
 
+def _misplaced_scenarios(kerno_dir: str, workspace: str) -> list[str]:
+    scenarios_dir = os.path.join(kerno_dir, "scenarios")
+    found = []
+    for directory, files in _scenario_files(scenarios_dir):
+        parts = os.path.relpath(directory, scenarios_dir).split(os.sep)
+        if parts[0] == "endpoints" or (parts[0] == "flows" and len(parts) > 1):
+            continue
+        found.extend(_relative(os.path.join(directory, name), workspace) for name in files)
+    return found
+
+
 def _read_endpoint(path: str) -> tuple[str, str] | None:
     try:
         with open(path, encoding="utf-8") as handle:
@@ -245,6 +262,11 @@ def report_left_out(discovery: Discovery) -> None:
         print(
             f"::warning::{len(discovery.duplicates)} scenario file(s) repeat an id already found for the same "
             f"endpoint or flow and were left out: {', '.join(discovery.duplicates[:MAX_NAMED_FILES])}"
+        )
+    if discovery.misplaced:
+        print(
+            f"::warning::{len(discovery.misplaced)} scenario file(s) sit outside .kerno/scenarios/endpoints/ and "
+            f"every flow folder and were left out: {', '.join(discovery.misplaced[:MAX_NAMED_FILES])}"
         )
 
 

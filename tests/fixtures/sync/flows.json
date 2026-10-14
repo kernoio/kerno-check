@@ -1,0 +1,176 @@
+{
+  "description": "A flow is a folder under scenarios/flows; its id is flow.json's id, else the folder name. Folders sharing an id are one flow, subfolders count, flows with no scenarios are dropped and stray files are reported.",
+  "files": {
+    "app/.kerno/scenarios/flows/checkout/flow.json": "{\"id\": \"checkout\", \"description\": \"Buy\", \"steps\": []}\n",
+    "app/.kerno/scenarios/flows/checkout/plan.json": "{\n  \"scenarios\": [\n    {\n      \"id\": \"happy_path\",\n      \"spec\": {\n        \"id\": \"happy_path\",\n        \"title\": \"Buys\",\n        \"kind\": \"happy_path\"\n      }\n    },\n    {\n      \"id\": \"paid_twice\",\n      \"spec\": {\n        \"id\": \"paid_twice\",\n        \"title\": \"Pays once\",\n        \"kind\": \"edge_case\"\n      }\n    }\n  ]\n}\n",
+    "app/.kerno/scenarios/flows/checkout/happy_path.scenario.ts": "export default async function scenario() {}\n",
+    "app/.kerno/scenarios/flows/checkout/paid_twice.scenario.ts": "export default async function scenario() {}\n",
+    "app/.kerno/scenarios/flows/checkout/preconditions.ts": "export const ready = true\n",
+    "app/.kerno/scenarios/flows/checkout/happy_path.scenario.md": "# Buys\n",
+    "app/.kerno/scenarios/flows/checkout-v2/flow.json": "{\"id\": \"checkout\"}\n",
+    "app/.kerno/scenarios/flows/checkout-v2/happy_path.scenario.ts": "export default async function scenario() {}\n",
+    "app/.kerno/scenarios/flows/checkout-v2/guest.scenario.ts": "export default async function scenario() {}\n",
+    "app/.kerno/scenarios/flows/refund/flow.json": "not json\n",
+    "app/.kerno/scenarios/flows/refund/happy_path.scenario.ts": "export default async function scenario() {}\n",
+    "app/.kerno/scenarios/flows/padded/flow.json": "{\"id\": \"  sign-up  \"}\n",
+    "app/.kerno/scenarios/flows/padded/happy_path.scenario.ts": "export default async function scenario() {}\n",
+    "app/.kerno/scenarios/flows/blank-id/flow.json": "{\"id\": \"   \"}\n",
+    "app/.kerno/scenarios/flows/blank-id/happy_path.scenario.ts": "export default async function scenario() {}\n",
+    "app/.kerno/scenarios/flows/numeric-id/flow.json": "{\"id\": 42}\n",
+    "app/.kerno/scenarios/flows/numeric-id/happy_path.scenario.ts": "export default async function scenario() {}\n",
+    "app/.kerno/scenarios/flows/no-flow-json/happy_path.scenario.ts": "export default async function scenario() {}\n",
+    "app/.kerno/scenarios/flows/bom-flow-json/flow.json": "﻿{\"id\": \"behind-bom\"}\n",
+    "app/.kerno/scenarios/flows/bom-flow-json/happy_path.scenario.ts": "export default async function scenario() {}\n",
+    "app/.kerno/scenarios/flows/empty/flow.json": "{\"id\": \"empty\"}\n",
+    "app/.kerno/scenarios/flows/empty/plan.json": "{\n  \"scenarios\": [\n    {\n      \"id\": \"never\",\n      \"spec\": {\n        \"id\": \"never\",\n        \"title\": \"Never written\",\n        \"kind\": \"happy_path\"\n      }\n    }\n  ]\n}\n",
+    "app/.kerno/scenarios/flows/nested/flow.json": "{\"id\": \"nested\"}\n",
+    "app/.kerno/scenarios/flows/nested/steps/pay/plan.json": "{\n  \"scenarios\": [\n    {\n      \"id\": \"pays\",\n      \"spec\": {\n        \"id\": \"pays\",\n        \"title\": \"Pays\",\n        \"kind\": \"happy_path\"\n      }\n    }\n  ]\n}\n",
+    "app/.kerno/scenarios/flows/nested/steps/pay/pays.scenario.ts": "export default async function scenario() {}\n",
+    "app/.kerno/scenarios/flows/nested/top.scenario.ts": "export default async function scenario() {}\n",
+    "app/.kerno/scenarios/flows/stray.scenario.ts": "export default async function scenario() {}\n",
+    "app/.kerno/scenarios/orphan.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /orphan',\n  path: 'GET /orphan',\n}\n\nexport default function scenario() {}\n",
+    "app/.kerno/scenarios/other/GET/x/kept_out.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /x',\n  path: 'GET /x',\n}\n\nexport default function scenario() {}\n",
+    "other/.kerno/scenarios/flows/checkout/happy_path.scenario.ts": "export default async function scenario() {}\n",
+    "other/.kerno/scenarios/flows/checkout/flow.json": "{\"id\": \"checkout\"}\n"
+  },
+  "expected": {
+    "endpoints": [],
+    "flows": [
+      {
+        "contentRoot": "app",
+        "flowId": "blank-id",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "app/.kerno/scenarios/flows/blank-id/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "flowId": "bom-flow-json",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "app/.kerno/scenarios/flows/bom-flow-json/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "flowId": "checkout",
+        "scenarios": [
+          {
+            "id": "guest",
+            "filePath": "app/.kerno/scenarios/flows/checkout-v2/guest.scenario.ts",
+            "title": null,
+            "kind": null
+          },
+          {
+            "id": "happy_path",
+            "filePath": "app/.kerno/scenarios/flows/checkout/happy_path.scenario.ts",
+            "title": "Buys",
+            "kind": "happy_path"
+          },
+          {
+            "id": "paid_twice",
+            "filePath": "app/.kerno/scenarios/flows/checkout/paid_twice.scenario.ts",
+            "title": "Pays once",
+            "kind": "edge_case"
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "flowId": "nested",
+        "scenarios": [
+          {
+            "id": "pays",
+            "filePath": "app/.kerno/scenarios/flows/nested/steps/pay/pays.scenario.ts",
+            "title": "Pays",
+            "kind": "happy_path"
+          },
+          {
+            "id": "top",
+            "filePath": "app/.kerno/scenarios/flows/nested/top.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "flowId": "no-flow-json",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "app/.kerno/scenarios/flows/no-flow-json/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "flowId": "numeric-id",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "app/.kerno/scenarios/flows/numeric-id/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "flowId": "refund",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "app/.kerno/scenarios/flows/refund/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "flowId": "sign-up",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "app/.kerno/scenarios/flows/padded/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "other",
+        "flowId": "checkout",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "other/.kerno/scenarios/flows/checkout/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      }
+    ],
+    "unreadable": [],
+    "duplicates": [
+      "app/.kerno/scenarios/flows/checkout-v2/happy_path.scenario.ts"
+    ],
+    "misplaced": [
+      "app/.kerno/scenarios/orphan.scenario.ts",
+      "app/.kerno/scenarios/flows/stray.scenario.ts",
+      "app/.kerno/scenarios/other/GET/x/kept_out.scenario.ts"
+    ]
+  }
+}

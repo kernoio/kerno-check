@@ -311,6 +311,7 @@ On a pull request it replays; on a push to main, or a run by hand, it syncs.
   its id (the file name), its file path, and its title and kind from the `plan.json` beside it.
   Flow scenarios under `.kerno/scenarios/flows/<flow>/` are sent under their flow's id (from its
   `flow.json`, or the folder name). Only scenarios are sent — not `.kerno/memory/` or any other file.
+  A scenario file outside `endpoints/` and every flow folder is left out, and the step warns.
 - **Each commit is recorded once.** Running the workflow again for the same commit changes nothing.
 - **The job summary** lists what the merge changed: endpoints and flows added and removed, and
   scenarios added and removed per endpoint or flow, each linked to the file at that commit.
