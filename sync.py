@@ -6,6 +6,11 @@
 4. Write what the merge changed to the job summary.
 
 Nothing is replayed, and a failure to send never fails the step.
+
+becore's `KernoSnapshotBuilder` mirrors step 2 for the GitHub App's sync. Any change to the
+`meta.path` regex, the `plan.json` lookup or the skip rules must change both, along with becore's
+golden fixtures in `apps/events-service/src/test/resources/kerno-snapshots/`, which mirror
+`tests/fixtures/sync/`.
 """
 
 from __future__ import annotations
@@ -13,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import sys
 from dataclasses import dataclass
 from typing import Any
@@ -38,17 +44,40 @@ META_PATH = re.compile(r"""\bpath\s*:\s*(['"`])\s*([A-Za-z]+)\s+(\S[^'"`]*?)\s*\
 # 1. Does this run record anything?
 
 
-def default_branch(event_path: str) -> str | None:
+def read_event(event_path: str) -> dict[str, Any]:
     if not event_path or not os.path.isfile(event_path):
-        return None
+        return {}
     try:
         with open(event_path, encoding="utf-8") as handle:
             event = json.load(handle)
     except (OSError, json.JSONDecodeError):
-        return None
-    repository = event.get("repository") if isinstance(event, dict) else None
+        return {}
+    return event if isinstance(event, dict) else {}
+
+
+def default_branch(event_path: str) -> str | None:
+    repository = read_event(event_path).get("repository")
     branch = repository.get("default_branch") if isinstance(repository, dict) else None
     return branch if isinstance(branch, str) and branch else None
+
+
+def commit_time(event_path: str, workspace: str, sha: str) -> str | None:
+    head_commit = read_event(event_path).get("head_commit")
+    timestamp = head_commit.get("timestamp") if isinstance(head_commit, dict) else None
+    if isinstance(timestamp, str) and timestamp.strip():
+        return timestamp.strip()
+    try:
+        result = subprocess.run(
+            ["git", "-C", workspace, "log", "-1", "--format=%cI", sha],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
 
 
 def branch_to_record() -> str | None:
@@ -273,8 +302,8 @@ def report_left_out(discovery: Discovery) -> None:
 # 3. Send the snapshot.
 
 
-def build_snapshot(branch: str, discovery: Discovery) -> dict[str, Any]:
-    return {
+def build_snapshot(branch: str, discovery: Discovery, committed_at: str | None = None) -> dict[str, Any]:
+    snapshot = {
         "gitRepo": os.environ["GITHUB_REPOSITORY"].strip(),
         "gitBranch": branch,
         "commitSha": os.environ["GITHUB_SHA"].strip(),
@@ -282,6 +311,9 @@ def build_snapshot(branch: str, discovery: Discovery) -> dict[str, Any]:
         "endpoints": discovery.endpoints,
         "flows": discovery.flows,
     }
+    if committed_at:
+        snapshot["committedAt"] = committed_at
+    return snapshot
 
 
 def send(snapshot: dict[str, Any], credentials: Credentials, http_put: HttpCall) -> dict[str, Any] | None:
@@ -316,7 +348,7 @@ def _run_url() -> str | None:
 # 4. Summarise what the merge changed.
 
 
-def format_summary(response: dict[str, Any], repository: str) -> str:
+def format_summary(response: dict[str, Any], repository: str, sent_run_url: str | None = None) -> str:
     snapshot = response.get("snapshot") or {}
     previous = response.get("previous")
     changes = response.get("changes") or {}
@@ -334,6 +366,11 @@ def format_summary(response: dict[str, Any], repository: str) -> str:
         totals += f" · **{flow_count}** flows · **{flow_scenario_count}** flow scenarios"
 
     lines = [f"### Kerno · {branch} @ `{_short(sha)}`", ""]
+    recorded_by = snapshot.get("runUrl")
+    if sent_run_url and recorded_by != sent_run_url:
+        source = f" by {recorded_by}" if recorded_by else ""
+        lines.append(f"`{_short(sha)}` was already recorded{source}, so this run added no new version: {totals}.")
+        return _joined(lines)
     if not previous:
         lines.append(f"First snapshot of {branch}: {totals}.")
         return _joined(lines)
@@ -451,7 +488,8 @@ def main(http_put: HttpCall = default_http_put, http_post: HttpCall | None = Non
     if credentials is None:
         return EXIT_OK
 
-    discovery = discover(os.environ.get("GITHUB_WORKSPACE", "").strip() or ".")
+    workspace = os.environ.get("GITHUB_WORKSPACE", "").strip() or "."
+    discovery = discover(workspace)
     report_left_out(discovery)
     if discovery.scenario_count > MAX_SCENARIOS:
         print(
@@ -460,7 +498,10 @@ def main(http_put: HttpCall = default_http_put, http_post: HttpCall | None = Non
         )
         return EXIT_OK
 
-    snapshot = build_snapshot(branch, discovery)
+    committed_at = commit_time(
+        os.environ.get("GITHUB_EVENT_PATH", "").strip(), workspace, os.environ["GITHUB_SHA"].strip()
+    )
+    snapshot = build_snapshot(branch, discovery, committed_at)
     print(
         f"Kerno sync: {len(discovery.endpoints)} endpoints, {len(discovery.flows)} flows, "
         f"{discovery.scenario_count} scenarios on {branch} @ {_short(snapshot['commitSha'])}"
@@ -469,7 +510,7 @@ def main(http_put: HttpCall = default_http_put, http_post: HttpCall | None = Non
     if response is None:
         return EXIT_OK
 
-    summary = format_summary(response, snapshot["gitRepo"])
+    summary = format_summary(response, snapshot["gitRepo"], snapshot["runUrl"])
     print(summary)
     write_summary(summary)
     return EXIT_OK
