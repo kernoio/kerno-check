@@ -4,6 +4,7 @@ import base64
 import io
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -16,6 +17,7 @@ from sync import (
     EXIT_OK,
     EXIT_USAGE,
     MAX_LISTED,
+    commit_time,
     default_branch,
     discover,
     format_summary,
@@ -65,11 +67,16 @@ class FakePut:
         self.error = error
 
     def __call__(self, url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
-        self.calls.append((url, headers, json.loads(body)))
+        sent = json.loads(body)
+        self.calls.append((url, headers, sent))
         if self.error is not None:
             raise self.error
         return self.status, self.body if self.body is not None else json.dumps(
-            {"snapshot": {"gitBranch": "main", "commitSha": "abc1234567", "endpoints": []}, "previous": None, "changes": {}}
+            {
+                "snapshot": {"gitBranch": "main", "commitSha": "abc1234567", "runUrl": sent.get("runUrl"), "endpoints": []},
+                "previous": None,
+                "changes": {},
+            }
         )
 
 
@@ -98,6 +105,41 @@ class DefaultBranchTest(unittest.TestCase):
             broken.write_text("{", encoding="utf-8")
             self.assertIsNone(default_branch(str(broken)))
             self.assertIsNone(default_branch(""))
+
+
+def git(cwd: Path, *args: str, **env: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=cwd, env={**os.environ, **env}, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+class CommitTimeTest(unittest.TestCase):
+    def test_a_push_reads_the_head_commits_timestamp_from_the_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            event = Path(tmp) / "event.json"
+            event.write_text(json.dumps({"head_commit": {"timestamp": "2026-10-12T13:32:38+01:00"}}), encoding="utf-8")
+
+            self.assertEqual(commit_time(str(event), tmp, "abc1234567"), "2026-10-12T13:32:38+01:00")
+
+    def test_without_a_head_commit_the_checkout_answers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            git(root, "init", "-q")
+            git(
+                root,
+                "-c", "user.name=k", "-c", "user.email=k@k", "commit", "-q", "--allow-empty", "-m", "x",
+                GIT_COMMITTER_DATE="2026-10-11T09:15:00+01:00",
+            )
+            event = root / "event.json"
+            event.write_text(json.dumps({"repository": {"default_branch": "main"}}), encoding="utf-8")
+
+            self.assertEqual(
+                commit_time(str(event), tmp, git(root, "rev-parse", "HEAD")), "2026-10-11T09:15:00+01:00"
+            )
+
+    def test_neither_an_event_nor_a_checkout_leaves_it_unknown(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(commit_time("", tmp, "abc1234567"))
 
 
 class LoadPlanTest(unittest.TestCase):
@@ -343,6 +385,36 @@ class FormatSummaryTest(unittest.TestCase):
         self.assertIn("**1** endpoints · **1** scenarios", text)
         self.assertNotIn("Added endpoints", text)
 
+    def test_a_commit_another_producer_recorded_says_no_new_version_was_added(self) -> None:
+        response = sync_response(
+            {"commitSha": "abc1234567", "endpointCount": 0, "scenarioCount": 0},
+            {"added": [endpoint("/a", "x")]},
+            [endpoint("/a", "x")],
+        )
+        response["snapshot"]["runUrl"] = "https://github.com/o/r/commit/def4567890"
+
+        text = format_summary(response, "o/r", "https://github.com/o/r/actions/runs/42")
+
+        self.assertIn(
+            "`def4567` was already recorded by https://github.com/o/r/commit/def4567890, "
+            "so this run added no new version",
+            text,
+        )
+        self.assertNotIn("Added endpoints", text)
+
+    def test_a_commit_this_run_recorded_lists_its_changes(self) -> None:
+        response = sync_response(
+            {"commitSha": "abc1234567", "endpointCount": 0, "scenarioCount": 0},
+            {"added": [endpoint("/a", "x")]},
+            [endpoint("/a", "x")],
+        )
+        response["snapshot"]["runUrl"] = "https://github.com/o/r/actions/runs/42"
+
+        text = format_summary(response, "o/r", "https://github.com/o/r/actions/runs/42")
+
+        self.assertNotIn("already recorded", text)
+        self.assertIn("Added endpoints", text)
+
     def test_changes_are_listed_with_deltas_and_links_to_the_right_commit(self) -> None:
         previous = {"commitSha": "abc1234567", "endpointCount": 2, "scenarioCount": 3}
         changes = {
@@ -520,6 +592,49 @@ class MainTest(unittest.TestCase):
             },
         )
         self.assertIn("First snapshot of main", self.summary.read_text(encoding="utf-8"))
+
+    def test_a_push_sends_the_head_commits_time(self) -> None:
+        self.event.write_text(
+            json.dumps(
+                {"repository": {"default_branch": "main"}, "head_commit": {"timestamp": "2026-10-12T13:32:38Z"}}
+            ),
+            encoding="utf-8",
+        )
+        put = FakePut()
+
+        self.run_main(put)
+
+        self.assertEqual(put.calls[0][2]["committedAt"], "2026-10-12T13:32:38Z")
+
+    def test_an_unknown_commit_time_is_left_out(self) -> None:
+        put = FakePut()
+
+        self.run_main(put)
+
+        self.assertNotIn("committedAt", put.calls[0][2])
+
+    def test_a_commit_the_github_app_already_synced_is_reported_as_no_new_version(self) -> None:
+        put = FakePut(
+            body=json.dumps(
+                {
+                    "snapshot": {
+                        "gitBranch": "main",
+                        "commitSha": "abc1234567",
+                        "runUrl": "https://github.com/o/r/commit/abc1234567",
+                        "endpoints": [],
+                    },
+                    "previous": None,
+                    "changes": {},
+                }
+            )
+        )
+
+        exit_code, _ = self.run_main(put)
+
+        self.assertEqual(exit_code, EXIT_OK)
+        summary = self.summary.read_text(encoding="utf-8")
+        self.assertIn("was already recorded by https://github.com/o/r/commit/abc1234567", summary)
+        self.assertNotIn("First snapshot", summary)
 
     def test_without_credentials_nothing_is_sent(self) -> None:
         put = FakePut()
