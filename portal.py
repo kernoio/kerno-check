@@ -1,4 +1,4 @@
-"""Open one portal run report per endpoint after replay, and return the URLs.
+"""Open one portal run report per endpoint or flow after replay, and return the URLs.
 
 The payload is the runner's capture (`run-report.json`), not a reconstruction from JUnit.
 JUnit is the CI gate; it cannot carry request/response fields, so inventing rows from it
@@ -27,6 +27,10 @@ DEFAULT_EVENTS_URL = "https://events.kerno.io/events-service/"
 DEFAULT_PORTAL_URL = "https://portal.kerno.io"
 VIRTUAL_KEY_HEADER = "x-kerno-virtual-key-id"
 EXCHANGE_PATH = "/api/api-keys/exchange"
+# The method segment a flow's run is stored under. It is not an HTTP verb: the portal and the
+# agent key a flow as method FLOW and path the flow id, and a CI run has to use that same pair
+# or it becomes a second history. The comment shows the id, not this segment.
+FLOW_METHOD = "FLOW"
 
 HttpCall = Callable[[str, dict[str, str], bytes], tuple[int, str]]
 
@@ -168,6 +172,7 @@ def parse_endpoint(classname: str) -> tuple[str, str] | None:
 
 
 def group_by_endpoint(scenarios: list[dict[str, Any]]) -> dict[tuple[str, str, str], list[dict[str, Any]]]:
+    """Endpoint scenarios only. A flow has no endpoint; opening runs goes through `group_subjects`."""
     grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
     for scenario in scenarios:
         parsed = parse_endpoint(str(scenario.get("endpoint") or ""))
@@ -176,6 +181,36 @@ def group_by_endpoint(scenarios: list[dict[str, Any]]) -> dict[tuple[str, str, s
         method, path = parsed
         grouped[(str(scenario.get("contentRoot") or ""), method, path)].append(scenario)
     return grouped
+
+
+def group_subjects(scenarios: list[dict[str, Any]]) -> dict[tuple[str, str, str], list[dict[str, Any]]]:
+    """One group per endpoint, and one per flow.
+
+    The key is ``(content_root, method, url_path)``, the coordinates a portal run is opened
+    with. A flow's method is ``FLOW`` and its path is the flow id. When a scenario carries a
+    flow id it is only that run — the endpoint string is not a second one. A scenario that is
+    neither is left out: there is no run to open.
+    """
+    grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    for scenario in scenarios:
+        content_root = str(scenario.get("contentRoot") or "")
+        flow_id = str(scenario.get("flowId") or "").strip()
+        if flow_id:
+            grouped[(content_root, FLOW_METHOD, flow_id)].append(scenario)
+            continue
+        parsed = parse_endpoint(str(scenario.get("endpoint") or ""))
+        if parsed is None:
+            continue
+        method, path = parsed
+        grouped[(content_root, method, path)].append(scenario)
+    return grouped
+
+
+def run_label(method: str, url_path: str) -> str:
+    """What a reviewer reads. A flow is its id; an endpoint is ``METHOD /path``."""
+    if method == FLOW_METHOD:
+        return url_path
+    return f"{method} {url_path}"
 
 
 def portal_run_url(portal_url: str, organization_id: str, run_report_id: str) -> str:
@@ -250,11 +285,11 @@ def publish_runs(
 ) -> list[PortalRun]:
     events_base = config.events_url.rstrip("/")
     published: list[PortalRun] = []
-    for (content_root, method, path), group in sorted(group_by_endpoint(scenarios).items()):
+    for (content_root, method, path), group in sorted(group_subjects(scenarios).items()):
         rows = _rows(group)
         if not rows:
             continue
-        endpoint = f"{method} {path}"
+        endpoint = run_label(method, path)
         start_body = json.dumps(
             {
                 "gitRepo": config.git_repo,

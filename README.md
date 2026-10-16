@@ -174,8 +174,8 @@ Three surfaces:
 
 | Surface | Who writes it | What it is for |
 |---------|----------------|----------------|
-| **PR comment** | this action | Totals, then one row per portal run (pass/fail and a report link). Totals only when there are no portal URLs. Never a row per scenario. |
-| **Checks tab** | `mikepenz/action-junit-report` | Per-scenario detail (expected vs actual, the failing assertion). |
+| **PR comment** | this action | Totals, then one row per endpoint or flow (pass/fail and a report link). Totals only when there are no portal URLs. Never a row per scenario. |
+| **Checks tab** | `mikepenz/action-junit-report` | Per-scenario detail (expected vs actual, the failing assertion). A flow is named by its id. |
 | **Job summary / log** | this action | The same table as the comment, plus the raw runner output. |
 
 The comment is the thing people read on the PR. Keep the JUnit reporter for the Checks tab, and
@@ -222,20 +222,22 @@ green with a warning — until someone replaces the secret with their own key.
 With portal credentials:
 
 ```markdown
-**Kerno check:** 12 passed, 1 failed, 0 skipped (13 total)
+**Kerno check:** 13 passed, 1 failed, 0 skipped (14 total)
 
-| Endpoint | Passed | Failed | Report |
+| Subject | Passed | Failed | Report |
 | --- | ---: | ---: | --- |
 | `services/orders · GET /health` | 2 | 0 | [open](https://portal.kerno.io/runs/…?org=…) |
 | `services/orders · POST /orders` | 4 | 1 | [open](https://portal.kerno.io/runs/…?org=…) |
+| `services/orders · checkout` | 1 | 0 | [open](https://portal.kerno.io/runs/…?org=…) |
 | `services/billing · GET /invoices` | 6 | 0 | [open](https://portal.kerno.io/runs/…?org=…) |
 ```
 
 Without credentials, or if opening a run failed, the table is omitted and only the totals line
 remains. The action upserts one comment (it does not stack a new one on every push).
 
-The linked page is the same `/runs/{id}` a generate or validate run opens. Each row is the HTTP
-capture from this replay — request, response, and status — not a stub rebuilt from JUnit.
+The linked page is the same `/runs/{id}` a generate or validate run opens. An endpoint row is that
+route's capture from this replay. A flow row is that flow, named by its id, and the run is stored
+under the same `FLOW` key the portal already uses. Neither is a stub rebuilt from JUnit.
 
 ### A complete workflow
 
