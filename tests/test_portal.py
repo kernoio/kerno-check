@@ -17,7 +17,9 @@ from portal import (
     DEFAULT_PORTAL_URL,
     VIRTUAL_KEY_HEADER,
     PortalConfig,
+    FLOW_METHOD,
     group_by_endpoint,
+    group_subjects,
     load_capture,
     load_credentials,
     load_portal_config,
@@ -108,6 +110,55 @@ class GroupByEndpointTest(unittest.TestCase):
             ]
         )
         self.assertEqual(set(grouped), {("orders", "GET", "/health"), ("billing", "GET", "/health")})
+
+
+class GroupSubjectsTest(unittest.TestCase):
+    def test_an_empty_endpoint_is_not_a_flow(self) -> None:
+        grouped = group_subjects(
+            [
+                scenario(name="ok", endpoint="POST /api/v1/chart/data"),
+                scenario(name="leak", endpoint="", content_root=""),
+            ]
+        )
+        self.assertEqual(set(grouped), {("app", "POST", "/api/v1/chart/data")})
+
+    def test_flows_group_by_id_and_do_not_become_endpoints(self) -> None:
+        leak = scenario(name="viewer-sees-only-own-team", endpoint="")
+        leak["flowId"] = "viewer-sees-only-own-team"
+        leak["contentRoot"] = ""
+        passed = scenario(name="analyst-builds-dashboard", endpoint="")
+        passed["flowId"] = "analyst-builds-dashboard"
+        passed["contentRoot"] = ""
+        chart = scenario(name="ok", endpoint="POST /api/v1/chart/data", content_root="")
+        grouped = group_subjects([chart, leak, passed])
+        self.assertEqual(
+            set(grouped),
+            {
+                ("", "POST", "/api/v1/chart/data"),
+                ("", FLOW_METHOD, "viewer-sees-only-own-team"),
+                ("", FLOW_METHOD, "analyst-builds-dashboard"),
+            },
+        )
+
+    def test_the_same_flow_in_two_apps_is_two_runs(self) -> None:
+        first = scenario(name="checkout", endpoint="", content_root="orders")
+        first["flowId"] = "checkout"
+        second = scenario(name="checkout", endpoint="", content_root="billing")
+        second["flowId"] = "checkout"
+        grouped = group_subjects([first, second])
+        self.assertEqual(
+            set(grouped),
+            {("orders", FLOW_METHOD, "checkout"), ("billing", FLOW_METHOD, "checkout")},
+        )
+
+    def test_a_flow_id_is_not_also_opened_as_its_endpoint(self) -> None:
+        row = scenario(name="checkout", endpoint="POST /orders")
+        row["flowId"] = "checkout"
+        grouped = group_subjects([row])
+        self.assertEqual(set(grouped), {("app", FLOW_METHOD, "checkout")})
+
+    def test_a_scenario_with_no_subject_is_left_out(self) -> None:
+        self.assertEqual(group_subjects([{"contentRoot": "app", "endpoint": "", "flowId": "  "}]), {})
 
 
 class LoadCaptureTest(unittest.TestCase):
@@ -309,6 +360,46 @@ class PublishRunsTest(unittest.TestCase):
         self.assertEqual(finish_orders["report"]["scenarios"][0]["state"], "diff_detected")
         self.assertEqual(finish_orders["report"]["scenarios"][0]["responseStatus"], 200)
         self.assertTrue(patches[0][0].endswith("/organizations/org-1/run-reports/run-1"))
+
+    def test_a_flow_opens_under_the_portal_key_and_is_named_by_its_id(self) -> None:
+        posts: list[tuple[str, dict[str, str], bytes]] = []
+
+        def http_post(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
+            posts.append((url, headers, body))
+            return 201, json.dumps({"id": f"run-{len(posts)}"})
+
+        def http_patch(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
+            return 200, ""
+
+        chart = scenario(name="ok", endpoint="POST /api/v1/chart/data", content_root="")
+        passed = scenario(name="analyst-builds-dashboard", endpoint="", content_root="")
+        passed["flowId"] = "analyst-builds-dashboard"
+        failed = scenario(name="viewer-sees-only-own-team", endpoint="", status="failed", content_root="")
+        failed["flowId"] = "viewer-sees-only-own-team"
+        runs = publish_runs(
+            [chart, passed, failed],
+            portal_config(),
+            http_post=http_post,
+            http_patch=http_patch,
+        )
+
+        self.assertEqual(
+            [(run.endpoint, run.passed, run.failed) for run in runs],
+            [
+                ("analyst-builds-dashboard", 1, 0),
+                ("viewer-sees-only-own-team", 0, 1),
+                ("POST /api/v1/chart/data", 1, 0),
+            ],
+        )
+        opened = [json.loads(body) for _, _, body in posts]
+        self.assertEqual(
+            [(item["method"], item["urlPath"]) for item in opened],
+            [
+                (FLOW_METHOD, "analyst-builds-dashboard"),
+                (FLOW_METHOD, "viewer-sees-only-own-team"),
+                ("POST", "/api/v1/chart/data"),
+            ],
+        )
 
     def test_does_not_invent_rows_when_the_capture_has_none(self) -> None:
         def http_post(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
