@@ -343,7 +343,16 @@ letting a scenario fail deep in a database step while every HTTP assertion aroun
 ```
 
 Each application is replayed against its own URL. Use this instead of `sut-url`; a directory here
-is the one containing `.kerno`, relative to the repository root.
+is the one containing `.kerno`, relative to the repository root. `.` is the repository root, so a
+root application and another service on a different port are one step:
+
+```yaml
+      - uses: kernoio/kerno-check@v1
+        with:
+          apps: |
+            .=http://localhost:8088
+            superset/mcp_service=http://localhost:5008/mcp
+```
 
 One report is written per application, so `report-path` is a directory in this mode:
 
@@ -454,7 +463,7 @@ jobs:
 | `app-dir` | no | *(repository root)* | Replay one application's scenarios. Unset discovers every `<app>/.kerno/scenarios` tree — what a monorepo usually wants. All discovered apps are replayed against the same `sut-url`. |
 | `scenarios` | no | *(all)* | Glob filter on the path relative to the scenarios directory, e.g. `endpoints/GET/**`. `*` stays within a segment, `**` crosses them. |
 | `image` | no | *(pinned digest)* | The runner image. Pinned by digest so a given version of this action always runs the same code. |
-| `apps` | no | | One `<dir>=<url>` per line, for a monorepo whose services listen on different ports. Each application is replayed against its own URL. Mutually exclusive with `sut-url` and `app-dir`. |
+| `apps` | no | | One `<dir>=<url>` per line, for a monorepo whose services listen on different ports. `.` is the repository root. Each application is replayed against its own URL. Mutually exclusive with `sut-url` and `app-dir`. |
 | `forward-env` | no | | Environment variable names to pass through to the scenarios, one per line, with values from this step's own `env:`. Only the names listed are forwarded. A name with no value fails the step before the container starts. |
 | `report-path` | no | `kerno-junit.xml` | Where the JUnit XML lands. A **directory** with `apps`, or when discovery finds more than one application, since the runner writes one report per application. |
 | `fail-on-failure` | no | `true` | Set `false` to report without gating. |
