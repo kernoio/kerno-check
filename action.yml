@@ -49,9 +49,9 @@ inputs:
   apps:
     description: >-
       Replay several applications, each against its own URL: one `<dir>=<url>` per line, where
-      `<dir>` is the directory containing `.kerno` relative to the repository root. Use this
-      instead of sut-url when a monorepo's services listen on different ports. Mutually exclusive
-      with sut-url and app-dir.
+      `<dir>` is the directory containing `.kerno` relative to the repository root. `.` is the
+      repository root. Use this instead of sut-url when a monorepo's services listen on different
+      ports. Mutually exclusive with sut-url and app-dir.
     required: false
     default: ""
   forward-env:
@@ -176,6 +176,13 @@ runs:
           exit 2
         fi
 
+        # `apps` names its applications up front and has always produced a directory of reports,
+        # including when only one application is listed.
+        separate_apps=0
+        if [ -n "$KERNO_APPS" ]; then
+          separate_apps=1
+        fi
+
         # A container's localhost is the container. Customers overwhelmingly run their SUT on the
         # runner itself, so rewrite it rather than making every first attempt fail on a connection
         # error that gives no hint why.
@@ -191,8 +198,10 @@ runs:
             ;;
         esac
 
-        # One --app=<dir>=<url> per line. The driver already supports per-application URLs; this
-        # is only the input surface for it.
+        # One <dir>=<url> per line. `.` and `./` are the repository root. The runner keys that
+        # application as an empty relative path and stops walking there, so a list that includes
+        # the root replays every line by its own scenarios directory. Any other list is passed
+        # through as --app=<dir>=<url>, which the runner matches against the directory it found.
         trim() {
           local v="$1"
           v="${v#"${v%%[![:space:]]*}"}"
@@ -200,6 +209,8 @@ runs:
         }
 
         app_args=()
+        app_dirs=()
+        app_urls=()
         while IFS= read -r line; do
           line="${line%%$'\r'}"
           [ -z "${line// }" ] && continue
@@ -211,12 +222,39 @@ runs:
             echo "::error::apps expects one <dir>=<url> per line, got: $line"
             exit 2
           fi
-          if [ ! -d "$GITHUB_WORKSPACE/${dir%/}/.kerno/scenarios" ]; then
-            echo "::error::no scenarios at ${dir%/}/.kerno/scenarios — check the apps input"
+          case "$dir" in
+            .|./) dir="." ;;
+            *) dir="${dir%/}" ;;
+          esac
+          if [ ! -d "$GITHUB_WORKSPACE/${dir}/.kerno/scenarios" ]; then
+            echo "::error::no scenarios at ${dir}/.kerno/scenarios — check the apps input"
             exit 2
           fi
-          app_args+=(--app="${dir%/}=$(rewrite_localhost "$url")")
+          url="$(rewrite_localhost "$url")"
+          app_dirs+=("$dir")
+          app_urls+=("$url")
+          if [ "$dir" != "." ]; then
+            app_args+=(--app="${dir}=${url}")
+          fi
         done <<< "$KERNO_APPS"
+
+        seen=$'\n'
+        for dir in "${app_dirs[@]+"${app_dirs[@]}"}"; do
+          case "$seen" in
+            *$'\n'"$dir"$'\n'*)
+              echo "::error::apps lists ${dir} more than once"
+              exit 2
+              ;;
+          esac
+          seen="${seen}${dir}"$'\n'
+        done
+
+        includes_root=0
+        for dir in "${app_dirs[@]+"${app_dirs[@]}"}"; do
+          if [ "$dir" = "." ]; then
+            includes_root=1
+          fi
+        done
 
         # Only the names asked for, and every one of them must have a value. A name with no value
         # is the silent-partial-pass case: the scenarios run, the HTTP assertions pass, and the one
@@ -288,48 +326,152 @@ runs:
         # An explicit `if` rather than `[ -n … ] && …`: under `set -e` a short-circuiting AND-OR
         # list is only exempt while it is not the last statement, so the terse form is safe here
         # by position alone and would fail silently if anything were ever appended after it.
+        only_args=()
         if [ -n "$KERNO_SCENARIOS" ]; then
-          scope_args+=(--only="$KERNO_SCENARIOS")
+          only_args=(--only="$KERNO_SCENARIOS")
+          scope_args+=("${only_args[@]}")
         fi
+
+        # Suite name for one application's report file. The runner uses the directory's own name
+        # when it is unique and the path otherwise, and calls the repository root `root`.
+        suite_name() {
+          local dir="$1"
+          local base other other_base count
+          if [ "$dir" = "." ]; then
+            base=root
+          else
+            base="${dir##*/}"
+          fi
+          count=0
+          for other in "${app_dirs[@]}"; do
+            if [ "$other" = "." ]; then
+              other_base=root
+            else
+              other_base="${other##*/}"
+            fi
+            if [ "$other_base" = "$base" ]; then
+              count=$((count + 1))
+            fi
+          done
+          if [ "$count" -le 1 ]; then
+            printf '%s' "$base"
+            return
+          fi
+          if [ "$dir" = "." ]; then
+            printf 'root'
+            return
+          fi
+          printf '%s' "${dir//\//-}"
+        }
 
         # A cancelled run leaves the container behind; the next run would then fail on the name
         # conflict while still copying the PREVIOUS run's reports out — a stale pass.
         docker rm -f kerno-check-run >/dev/null 2>&1 || true
 
-        set +e
-        # --sut-base-url is omitted entirely when apps carries the URLs: the driver rejects an
-        # --app mapping combined with a blank base URL, and passing an empty string would look
-        # like a configured-but-empty URL rather than "not set".
-        url_args=()
-        if [ -n "$sut_url" ]; then
-          url_args=(--sut-base-url="$sut_url")
-        fi
-
-        # The driver writes one report per application and refuses --junit for more than one, and
-        # how many there are is only known after discovery has run INSIDE the container — so no
-        # combination of inputs can pick the flag correctly. Always ask for a directory, and decide
-        # report-path's shape below from what actually came back.
-        junit_args=(--junit-dir=/out/junit)
-
-        docker run --name kerno-check-run \
-          --add-host=host.docker.internal:host-gateway \
-          --cap-add=NET_ADMIN \
-          "${env_args[@]+"${env_args[@]}"}" \
-          -v "$GITHUB_WORKSPACE:/workspace:ro" \
-          "$KERNO_IMAGE" replay \
-            "${scope_args[@]}" \
-            "${app_args[@]+"${app_args[@]}"}" \
-            "${url_args[@]+"${url_args[@]}"}" \
-            "${junit_args[@]}" \
-            --summary=/out/summary.md
-        replay_exit=$?
-        set -e
-
         # Copied out rather than bind-mounted: a directory created in the same step that mounts it
         # does not reliably receive the container's writes.
         report_dir=$(mktemp -d)
-        docker cp kerno-check-run:/out/. "$report_dir/" || echo "::warning::the run produced no reports"
-        docker rm -f kerno-check-run >/dev/null 2>&1 || true
+        replay_exit=0
+
+        if [ "$includes_root" = 1 ]; then
+          # One container per application. Discovery cannot see a sibling of the repository-root
+          # app, and --app=. does not match the empty key discovery uses for that app, so no
+          # single replay invocation can carry both URLs. --scenarios-dir is how this runner
+          # already replays the root on its own.
+          mkdir -p "$report_dir/junit"
+          : > "$report_dir/summary.md"
+          capture_manifest=$(mktemp)
+          : > "$capture_manifest"
+          for i in "${!app_dirs[@]}"; do
+            dir="${app_dirs[$i]}"
+            url="${app_urls[$i]}"
+            if [ "$dir" = "." ]; then
+              scenarios_dir="/workspace/.kerno/scenarios"
+              content_root=""
+            else
+              scenarios_dir="/workspace/${dir}/.kerno/scenarios"
+              content_root="$dir"
+            fi
+            suite="$(suite_name "$dir")"
+            echo "replaying ${dir} against ${url}"
+
+            set +e
+            docker run --name kerno-check-run \
+              --add-host=host.docker.internal:host-gateway \
+              --cap-add=NET_ADMIN \
+              "${env_args[@]+"${env_args[@]}"}" \
+              -v "$GITHUB_WORKSPACE:/workspace:ro" \
+              "$KERNO_IMAGE" replay \
+                --scenarios-dir="$scenarios_dir" \
+                --sut-base-url="$url" \
+                --suite-name="$suite" \
+                "${only_args[@]+"${only_args[@]}"}" \
+                --junit-dir=/out/junit \
+                --summary=/out/summary.md
+            code=$?
+            set -e
+            if [ "$code" -gt "$replay_exit" ]; then
+              replay_exit=$code
+            fi
+
+            piece=$(mktemp -d)
+            if docker cp kerno-check-run:/out/. "$piece/"; then
+              if [ -d "$piece/junit" ]; then
+                while IFS= read -r report; do
+                  cp "$report" "$report_dir/junit/"
+                done < <(find "$piece/junit" -maxdepth 1 -type f -name '*.xml' | sort)
+                if [ -f "$piece/junit/run-report.json" ]; then
+                  cp "$piece/junit/run-report.json" "$report_dir/capture-${i}.json"
+                  python3 -c 'import json,sys; print(json.dumps({"contentRoot": sys.argv[1], "path": sys.argv[2]}))' \
+                    "$content_root" "$report_dir/capture-${i}.json" >> "$capture_manifest"
+                fi
+              fi
+              if [ -f "$piece/summary.md" ]; then
+                cat "$piece/summary.md" >> "$report_dir/summary.md"
+              fi
+            else
+              echo "::warning::the run for ${dir} produced no reports"
+            fi
+            rm -rf "$piece"
+            docker rm -f kerno-check-run >/dev/null 2>&1 || true
+          done
+          if [ -s "$capture_manifest" ]; then
+            python3 "$GITHUB_ACTION_PATH/captures.py" "$report_dir/junit/run-report.json" < "$capture_manifest"
+          fi
+          rm -f "$capture_manifest"
+        else
+          set +e
+          # --sut-base-url is omitted entirely when apps carries the URLs: the driver rejects an
+          # --app mapping combined with a blank base URL, and passing an empty string would look
+          # like a configured-but-empty URL rather than "not set".
+          url_args=()
+          if [ -n "$sut_url" ]; then
+            url_args=(--sut-base-url="$sut_url")
+          fi
+
+          # The driver writes one report per application and refuses --junit for more than one, and
+          # how many there are is only known after discovery has run INSIDE the container — so no
+          # combination of inputs can pick the flag correctly. Always ask for a directory, and decide
+          # report-path's shape below from what actually came back.
+          junit_args=(--junit-dir=/out/junit)
+
+          docker run --name kerno-check-run \
+            --add-host=host.docker.internal:host-gateway \
+            --cap-add=NET_ADMIN \
+            "${env_args[@]+"${env_args[@]}"}" \
+            -v "$GITHUB_WORKSPACE:/workspace:ro" \
+            "$KERNO_IMAGE" replay \
+              "${scope_args[@]}" \
+              "${app_args[@]+"${app_args[@]}"}" \
+              "${url_args[@]+"${url_args[@]}"}" \
+              "${junit_args[@]}" \
+              --summary=/out/summary.md
+          replay_exit=$?
+          set -e
+
+          docker cp kerno-check-run:/out/. "$report_dir/" || echo "::warning::the run produced no reports"
+          docker rm -f kerno-check-run >/dev/null 2>&1 || true
+        fi
 
         # report-path keeps the shape it has always had: a file when one application was replayed,
         # the directory of per-application reports when several were. `apps` names its applications
@@ -341,7 +483,7 @@ runs:
           done < <(find "$report_dir/junit" -maxdepth 1 -type f -name '*.xml' | sort)
         fi
 
-        if [ "${#reports[@]}" -eq 1 ] && [ "${#app_args[@]}" -eq 0 ]; then
+        if [ "${#reports[@]}" -eq 1 ] && [ "$separate_apps" != 1 ]; then
           mkdir -p "$(dirname "$GITHUB_WORKSPACE/$KERNO_REPORT_PATH")"
           cp "${reports[0]}" "$GITHUB_WORKSPACE/$KERNO_REPORT_PATH"
           echo "junit-path=$KERNO_REPORT_PATH" >> "$GITHUB_OUTPUT"
