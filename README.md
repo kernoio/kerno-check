@@ -464,7 +464,7 @@ jobs:
 | `sut-url` | in replay, unless `apps` | | Base URL of your running application. A `localhost` URL is rewritten to `host.docker.internal`, since scenarios execute inside a container. |
 | `app-dir` | no | *(repository root)* | Replay one application's scenarios. Unset discovers every `<app>/.kerno/scenarios` tree — what a monorepo usually wants. All discovered apps are replayed against the same `sut-url`. |
 | `scenarios` | no | *(all)* | Glob filter on the path relative to the scenarios directory, e.g. `endpoints/GET/**`. `*` stays within a segment, `**` crosses them. |
-| `image` | no | *(pinned digest)* | The runner image. Pinned by digest so a given version of this action always runs the same code. |
+| `image` | no | `kernoio/ts-sandbox:latest` | The runner image. Defaults to the production `latest` build; override to pin a digest or test an unreleased build. |
 | `apps` | no | | One `<dir>=<url>` per line, for a monorepo whose services listen on different ports. `.` is the repository root. Each application is replayed against its own URL. Mutually exclusive with `sut-url` and `app-dir`. |
 | `forward-env` | no | | Environment variable names to pass through to the scenarios, one per line, with values from this step's own `env:`. Only the names listed are forwarded. A name with no value fails the step before the container starts. |
 | `report-path` | no | `kerno-junit.xml` | Where the JUnit XML lands. A **directory** with `apps`, or when discovery finds more than one application, since the runner writes one report per application. |

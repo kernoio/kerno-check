@@ -1,0 +1,12 @@
+{
+  "scenarios": [
+    {
+      "id": "happy_path",
+      "spec": {
+        "id": "happy_path",
+        "title": "Walks GET /",
+        "kind": "happy_path"
+      }
+    }
+  ]
+}
