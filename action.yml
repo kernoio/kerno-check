@@ -42,10 +42,10 @@ inputs:
     default: ""
   image:
     description: >-
-      The Kerno runner image. Pinned by digest so a given version of this action always runs the
-      same code; override only to test an unreleased build.
+      The Kerno runner image. Defaults to the production `latest` build of kernoio/ts-sandbox, which
+      moves when ts-sandbox is published — override to pin a digest or try an unreleased build.
     required: false
-    default: kernoio/ts-sandbox@sha256:e814c076d4d7e71f92f27f9e39f78d6c71f5aeb9ea582f9ae9630b768edde425
+    default: kernoio/ts-sandbox:latest
   apps:
     description: >-
       Replay several applications, each against its own URL: one `<dir>=<url>` per line, where

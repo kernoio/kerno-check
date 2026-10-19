@@ -1,16 +1,15 @@
 """Fail unless action.yml's default runner image can publish the HTTP capture.
 
 The composite action opens portal runs from run-report.json, which only recent runner images
-write. A digest pin in action.yml is not enough on its own — this checks the pinned image still
-ships capture-report.js.
+write. CI pulls whatever `image` defaults to and checks the image still ships capture-report.js.
 """
 
 import re
 import subprocess
 import sys
 
-PIN = re.compile(
-    r"^\s*default:\s*(?P<ref>kernoio/ts-sandbox@sha256:[0-9a-f]{64})\s*$",
+IMAGE_DEFAULT = re.compile(
+    r"^\s*image:\s*\n(?:[ \t].*\n)*?\s*default:\s*(?P<ref>\S+)\s*$",
     re.M,
 )
 CAPTURE_PUBLISHER = "/app/dist/capture-report.js"
@@ -18,11 +17,11 @@ CAPTURE_PUBLISHER = "/app/dist/capture-report.js"
 
 def main() -> int:
     source = open("action.yml", encoding="utf-8").read()
-    match = PIN.search(source)
+    match = IMAGE_DEFAULT.search(source)
     if not match:
         print(
-            "::error file=action.yml::no runner image pinned by digest was found — "
-            "cannot verify the default image"
+            "::error file=action.yml::could not read the `image` input default — "
+            "cannot verify the runner image"
         )
         return 1
 

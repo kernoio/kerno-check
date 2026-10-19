@@ -27,13 +27,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Cheap, no Docker: a released version must never carry a floating image reference.
+  # Cheap, no Docker: the runner default must stay on production latest, not a dev tag or digest.
   validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: The image must be pinned by digest
-        run: python3 .github/scripts/verify_image_pin.py
+      - name: The runner image must default to production latest
+        run: python3 .github/scripts/verify_runner_image_default.py
 
       - name: The default runner image can publish the HTTP capture
         run: python3 .github/scripts/verify_default_runner_image.py
