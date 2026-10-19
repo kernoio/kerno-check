@@ -45,7 +45,7 @@ inputs:
       The Kerno runner image. Pinned by digest so a given version of this action always runs the
       same code; override only to test an unreleased build.
     required: false
-    default: kernoio/ts-sandbox@sha256:0f5d2c152dcfd1ad0ceb5dbbf42b6b966de03d3a3d869c4f48f3a3d03eac74d1
+    default: kernoio/ts-sandbox@sha256:e814c076d4d7e71f92f27f9e39f78d6c71f5aeb9ea582f9ae9630b768edde425
   apps:
     description: >-
       Replay several applications, each against its own URL: one `<dir>=<url>` per line, where
