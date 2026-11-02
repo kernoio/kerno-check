@@ -1,7 +1,8 @@
 """PR comment and job-summary table for a replay: totals, then one row per portal run.
 
-Without portal URLs the comment is only the totals — a large passing suite must not become a
-row per scenario. The JUnit reporter can still create a check; this is the comment.
+A run is one endpoint or one flow. Without portal URLs the comment is only the totals — a large
+passing suite must not become a row per scenario. The JUnit reporter can still create a check;
+this is the comment.
 """
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ def format_comment(
         return "\n".join(lines)
     lines.extend(
         [
-            "| Endpoint | Passed | Failed | Report |",
+            "| Subject | Passed | Failed | Report |",
             "| --- | ---: | ---: | --- |",
         ]
     )

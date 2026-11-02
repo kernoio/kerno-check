@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import base64
 import io
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -15,13 +17,17 @@ from sync import (
     EXIT_OK,
     EXIT_USAGE,
     MAX_LISTED,
+    commit_time,
     default_branch,
     discover,
     format_summary,
     load_plan,
     main,
     parse_meta_path,
+    report_left_out,
 )
+
+SYNC_FIXTURES = Path(__file__).parent / "fixtures" / "sync"
 
 
 def scenario_source(path: str) -> str:
@@ -41,6 +47,12 @@ def write(root: Path, relative: str, content: str) -> None:
     target.write_text(content, encoding="utf-8")
 
 
+def write_bytes(root: Path, relative: str, content: bytes) -> None:
+    target = root / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(content)
+
+
 def plan(*entries: tuple[str, str, str]) -> str:
     return json.dumps(
         {"scenarios": [{"id": i, "spec": {"id": i, "title": title, "kind": kind}} for i, title, kind in entries]}
@@ -55,11 +67,16 @@ class FakePut:
         self.error = error
 
     def __call__(self, url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
-        self.calls.append((url, headers, json.loads(body)))
+        sent = json.loads(body)
+        self.calls.append((url, headers, sent))
         if self.error is not None:
             raise self.error
         return self.status, self.body if self.body is not None else json.dumps(
-            {"snapshot": {"gitBranch": "main", "commitSha": "abc1234567", "endpoints": []}, "previous": None, "changes": {}}
+            {
+                "snapshot": {"gitBranch": "main", "commitSha": "abc1234567", "runUrl": sent.get("runUrl"), "endpoints": []},
+                "previous": None,
+                "changes": {},
+            }
         )
 
 
@@ -88,6 +105,41 @@ class DefaultBranchTest(unittest.TestCase):
             broken.write_text("{", encoding="utf-8")
             self.assertIsNone(default_branch(str(broken)))
             self.assertIsNone(default_branch(""))
+
+
+def git(cwd: Path, *args: str, **env: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=cwd, env={**os.environ, **env}, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+class CommitTimeTest(unittest.TestCase):
+    def test_a_push_reads_the_head_commits_timestamp_from_the_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            event = Path(tmp) / "event.json"
+            event.write_text(json.dumps({"head_commit": {"timestamp": "2026-10-12T13:32:38+01:00"}}), encoding="utf-8")
+
+            self.assertEqual(commit_time(str(event), tmp, "abc1234567"), "2026-10-12T13:32:38+01:00")
+
+    def test_without_a_head_commit_the_checkout_answers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            git(root, "init", "-q")
+            git(
+                root,
+                "-c", "user.name=k", "-c", "user.email=k@k", "commit", "-q", "--allow-empty", "-m", "x",
+                GIT_COMMITTER_DATE="2026-10-11T09:15:00+01:00",
+            )
+            event = root / "event.json"
+            event.write_text(json.dumps({"repository": {"default_branch": "main"}}), encoding="utf-8")
+
+            self.assertEqual(
+                commit_time(str(event), tmp, git(root, "rev-parse", "HEAD")), "2026-10-11T09:15:00+01:00"
+            )
+
+    def test_neither_an_event_nor_a_checkout_leaves_it_unknown(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(commit_time("", tmp, "abc1234567"))
 
 
 class LoadPlanTest(unittest.TestCase):
@@ -157,6 +209,51 @@ class DiscoverTest(unittest.TestCase):
         self.assertEqual(discovery.scenario_count, 1)
         self.assertEqual(discovery.duplicates, ["app/.kerno/scenarios/endpoints/GET/app/a/happy_path.scenario.ts"])
 
+    def test_flows_are_keyed_by_the_id_in_flow_json_and_carry_their_scenarios(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            checkout = "apps/shop/.kerno/scenarios/flows/checkout"
+            write(root, f"{checkout}/flow.json", json.dumps({"id": "checkout", "description": "Buy", "steps": []}))
+            write(root, f"{checkout}/plan.json", plan(("paid_twice", "Pays once", "edge_case")))
+            write(root, f"{checkout}/happy_path.scenario.ts", "export default function scenario() {}\n")
+            write(root, f"{checkout}/paid_twice.scenario.ts", "export default function scenario() {}\n")
+            write(root, f"{checkout}/preconditions.ts", "export const x = 1\n")
+            write(root, "apps/shop/.kerno/scenarios/flows/refund/flow.json", "not json")
+            write(root, "apps/shop/.kerno/scenarios/flows/refund/happy_path.scenario.ts", "export default 1\n")
+            write(root, "apps/shop/.kerno/scenarios/flows/sign-up/flow.json", json.dumps({"id": "sign-up"}))
+
+            discovery = discover(tmp)
+
+        self.assertEqual(discovery.endpoints, [])
+        self.assertEqual(discovery.unreadable, [])
+        self.assertEqual(
+            discovery.flows,
+            [
+                {
+                    "contentRoot": "apps/shop",
+                    "flowId": "checkout",
+                    "scenarios": [
+                        {"id": "happy_path", "filePath": f"{checkout}/happy_path.scenario.ts", "title": None, "kind": None},
+                        {"id": "paid_twice", "filePath": f"{checkout}/paid_twice.scenario.ts", "title": "Pays once", "kind": "edge_case"},
+                    ],
+                },
+                {
+                    "contentRoot": "apps/shop",
+                    "flowId": "refund",
+                    "scenarios": [
+                        {
+                            "id": "happy_path",
+                            "filePath": "apps/shop/.kerno/scenarios/flows/refund/happy_path.scenario.ts",
+                            "title": None,
+                            "kind": None,
+                        }
+                    ],
+                },
+            ],
+        )
+        self.assertEqual(discovery.flow_scenario_count, 3)
+        self.assertEqual(discovery.scenario_count, 3)
+
     def test_a_scenario_without_a_readable_meta_path_is_left_out_and_reported(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -166,6 +263,101 @@ class DiscoverTest(unittest.TestCase):
 
         self.assertEqual(discovery.endpoints, [])
         self.assertEqual(discovery.unreadable, ["app/.kerno/scenarios/endpoints/GET/a/broken.scenario.ts"])
+
+    def test_flow_folders_sharing_an_id_are_one_flow_and_a_repeated_scenario_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            flows = "app/.kerno/scenarios/flows"
+            write(root, f"{flows}/checkout/flow.json", json.dumps({"id": "checkout"}))
+            write(root, f"{flows}/checkout/happy_path.scenario.ts", "export default 1\n")
+            write(root, f"{flows}/checkout-v2/flow.json", json.dumps({"id": "checkout"}))
+            write(root, f"{flows}/checkout-v2/happy_path.scenario.ts", "export default 1\n")
+            write(root, f"{flows}/checkout-v2/paid_twice.scenario.ts", "export default 1\n")
+
+            discovery = discover(tmp)
+
+        self.assertEqual([(f["flowId"], [s["filePath"] for s in f["scenarios"]]) for f in discovery.flows], [
+            ("checkout", [f"{flows}/checkout/happy_path.scenario.ts", f"{flows}/checkout-v2/paid_twice.scenario.ts"]),
+        ])
+        self.assertEqual(discovery.duplicates, [f"{flows}/checkout-v2/happy_path.scenario.ts"])
+
+    def test_a_flow_also_reads_the_folders_inside_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            nested = "app/.kerno/scenarios/flows/checkout/steps/pay"
+            write(root, f"{nested}/plan.json", plan(("pays", "Pays", "happy_path")))
+            write(root, f"{nested}/pays.scenario.ts", "export default 1\n")
+
+            discovery = discover(tmp)
+
+        self.assertEqual(discovery.flows, [
+            {
+                "contentRoot": "app",
+                "flowId": "checkout",
+                "scenarios": [{"id": "pays", "filePath": f"{nested}/pays.scenario.ts", "title": "Pays", "kind": "happy_path"}],
+            }
+        ])
+
+    def test_within_an_app_flow_repeats_are_reported_before_endpoint_repeats(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for folder in ("a", "b"):
+                write(root, f"app/.kerno/scenarios/endpoints/GET/{folder}/x.scenario.ts", scenario_source("GET /a"))
+                write(root, f"app/.kerno/scenarios/flows/f/{folder}/x.scenario.ts", "export default 1\n")
+
+            discovery = discover(tmp)
+
+        self.assertEqual(discovery.duplicates, [
+            "app/.kerno/scenarios/flows/f/b/x.scenario.ts",
+            "app/.kerno/scenarios/endpoints/GET/b/x.scenario.ts",
+        ])
+
+    def test_a_scenario_outside_endpoints_and_every_flow_folder_is_left_out_and_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write(root, "app/.kerno/scenarios/orphan.scenario.ts", scenario_source("GET /a"))
+            write(root, "app/.kerno/scenarios/flows/stray.scenario.ts", "export default 1\n")
+            write(root, "app/.kerno/scenarios/other/GET/a/kept_out.scenario.ts", scenario_source("GET /a"))
+
+            discovery = discover(tmp)
+            output = io.StringIO()
+            with redirect_stdout(output):
+                report_left_out(discovery)
+
+        self.assertEqual((discovery.endpoints, discovery.flows), ([], []))
+        self.assertEqual(discovery.misplaced, [
+            "app/.kerno/scenarios/orphan.scenario.ts",
+            "app/.kerno/scenarios/flows/stray.scenario.ts",
+            "app/.kerno/scenarios/other/GET/a/kept_out.scenario.ts",
+        ])
+        self.assertIn("3 scenario file(s) sit outside .kerno/scenarios/endpoints/", output.getvalue())
+
+
+class SyncFixturesTest(unittest.TestCase):
+    def test_discovery_matches_every_shared_fixture(self) -> None:
+        fixtures = sorted(SYNC_FIXTURES.glob("*.json"))
+        self.assertTrue(fixtures)
+        for fixture in fixtures:
+            with self.subTest(fixture.name):
+                case = json.loads(fixture.read_text(encoding="utf-8"))
+                with tempfile.TemporaryDirectory() as tmp:
+                    for relative, content in case["files"].items():
+                        write_bytes(Path(tmp), relative, content.encode("utf-8"))
+                    for relative, content in case.get("binaryFiles", {}).items():
+                        write_bytes(Path(tmp), relative, base64.b64decode(content))
+                    discovery = discover(tmp)
+
+                actual = {
+                    "endpoints": discovery.endpoints,
+                    "flows": discovery.flows,
+                    "unreadable": discovery.unreadable,
+                    "duplicates": discovery.duplicates,
+                    "misplaced": discovery.misplaced,
+                }
+                if os.environ.get("KERNO_UPDATE_SYNC_FIXTURES"):
+                    case["expected"] = actual
+                    fixture.write_text(json.dumps(case, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                self.assertEqual(case["expected"], actual)
 
 
 def sync_response(previous: dict | None, changes: dict, endpoints: list[dict]) -> dict:
@@ -192,6 +384,36 @@ class FormatSummaryTest(unittest.TestCase):
         self.assertIn("First snapshot of main", text)
         self.assertIn("**1** endpoints · **1** scenarios", text)
         self.assertNotIn("Added endpoints", text)
+
+    def test_a_commit_another_producer_recorded_says_no_new_version_was_added(self) -> None:
+        response = sync_response(
+            {"commitSha": "abc1234567", "endpointCount": 0, "scenarioCount": 0},
+            {"added": [endpoint("/a", "x")]},
+            [endpoint("/a", "x")],
+        )
+        response["snapshot"]["runUrl"] = "https://github.com/o/r/commit/def4567890"
+
+        text = format_summary(response, "o/r", "https://github.com/o/r/actions/runs/42")
+
+        self.assertIn(
+            "`def4567` was already recorded by https://github.com/o/r/commit/def4567890, "
+            "so this run added no new version",
+            text,
+        )
+        self.assertNotIn("Added endpoints", text)
+
+    def test_a_commit_this_run_recorded_lists_its_changes(self) -> None:
+        response = sync_response(
+            {"commitSha": "abc1234567", "endpointCount": 0, "scenarioCount": 0},
+            {"added": [endpoint("/a", "x")]},
+            [endpoint("/a", "x")],
+        )
+        response["snapshot"]["runUrl"] = "https://github.com/o/r/actions/runs/42"
+
+        text = format_summary(response, "o/r", "https://github.com/o/r/actions/runs/42")
+
+        self.assertNotIn("already recorded", text)
+        self.assertIn("Added endpoints", text)
 
     def test_changes_are_listed_with_deltas_and_links_to_the_right_commit(self) -> None:
         previous = {"commitSha": "abc1234567", "endpointCount": 2, "scenarioCount": 3}
@@ -223,6 +445,50 @@ class FormatSummaryTest(unittest.TestCase):
         self.assertIn("−[Stale one](https://github.com/o/r/blob/abc1234567/app/.kerno/stale.scenario.ts)", text)
         self.assertIn("`POST /kept` (app) (1 → 1)", text)
 
+    def test_flow_totals_and_changes_are_listed_next_to_endpoints(self) -> None:
+        previous = {"commitSha": "abc1234567", "endpointCount": 1, "scenarioCount": 1, "flowCount": 1, "flowScenarioCount": 1}
+        checkout = {
+            "contentRoot": "app",
+            "flowId": "checkout",
+            "scenarios": [{"id": "happy_path", "filePath": "app/.kerno/scenarios/flows/checkout/happy_path.scenario.ts", "title": "Buys"}],
+        }
+        changes = {
+            "addedFlows": [checkout],
+            "removedFlows": [{"contentRoot": "app", "flowId": "refund", "scenarios": [{"id": "old", "filePath": "r/old.scenario.ts"}]}],
+            "changedFlows": [
+                {
+                    "contentRoot": "app",
+                    "flowId": "sign-up",
+                    "fromScenarioCount": 1,
+                    "toScenarioCount": 2,
+                    "addedScenarios": [{"id": "fresh", "filePath": "s/fresh.scenario.ts"}],
+                    "removedScenarios": [],
+                }
+            ],
+        }
+        response = sync_response(previous, changes, [endpoint("/a", "x")])
+        response["snapshot"]["flows"] = [checkout, {"contentRoot": "app", "flowId": "sign-up", "scenarios": [{}, {}]}]
+
+        with patch.dict(os.environ, {"GITHUB_SERVER_URL": "https://github.com"}):
+            text = format_summary(response, "o/r")
+
+        self.assertIn("**1** endpoints · **1** scenarios · **2** flows · **3** flow scenarios", text)
+        self.assertIn("+0 endpoints, +0 scenarios, +1 flows, +2 flow scenarios since `abc1234`", text)
+        self.assertIn("#### Added flows", text)
+        self.assertIn(
+            "- `checkout` (app): [Buys](https://github.com/o/r/blob/def4567890/app/.kerno/scenarios/flows/checkout/happy_path.scenario.ts)",
+            text,
+        )
+        self.assertIn("#### Removed flows", text)
+        self.assertIn("- `refund` (app): [old](https://github.com/o/r/blob/abc1234567/r/old.scenario.ts)", text)
+        self.assertIn("- `sign-up` (app) (1 → 2): +[fresh]", text)
+
+    def test_a_repo_without_flows_lists_none(self) -> None:
+        previous = {"commitSha": "abc1234567", "endpointCount": 1, "scenarioCount": 1}
+        text = format_summary(sync_response(previous, {}, [endpoint("/a", "x")]), "o/r")
+
+        self.assertNotIn("flows", text)
+
     def test_no_changes_says_so(self) -> None:
         previous = {"commitSha": "abc1234567", "endpointCount": 1, "scenarioCount": 1}
         text = format_summary(sync_response(previous, {}, [endpoint("/a", "x")]), "o/r")
@@ -243,6 +509,8 @@ class MainTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         write(self.root, "app/.kerno/scenarios/endpoints/GET/a/happy_path.scenario.ts", scenario_source("GET /a"))
+        write(self.root, "app/.kerno/scenarios/flows/checkout/flow.json", json.dumps({"id": "checkout"}))
+        write(self.root, "app/.kerno/scenarios/flows/checkout/happy_path.scenario.ts", "export default 1\n")
         self.event = self.root / "event.json"
         self.event.write_text(json.dumps({"repository": {"default_branch": "main"}}), encoding="utf-8")
         self.summary = self.root / "summary.md"
@@ -307,9 +575,66 @@ class MainTest(unittest.TestCase):
                         ],
                     }
                 ],
+                "flows": [
+                    {
+                        "contentRoot": "app",
+                        "flowId": "checkout",
+                        "scenarios": [
+                            {
+                                "id": "happy_path",
+                                "filePath": "app/.kerno/scenarios/flows/checkout/happy_path.scenario.ts",
+                                "title": None,
+                                "kind": None,
+                            }
+                        ],
+                    }
+                ],
             },
         )
         self.assertIn("First snapshot of main", self.summary.read_text(encoding="utf-8"))
+
+    def test_a_push_sends_the_head_commits_time(self) -> None:
+        self.event.write_text(
+            json.dumps(
+                {"repository": {"default_branch": "main"}, "head_commit": {"timestamp": "2026-10-12T13:32:38Z"}}
+            ),
+            encoding="utf-8",
+        )
+        put = FakePut()
+
+        self.run_main(put)
+
+        self.assertEqual(put.calls[0][2]["committedAt"], "2026-10-12T13:32:38Z")
+
+    def test_an_unknown_commit_time_is_left_out(self) -> None:
+        put = FakePut()
+
+        self.run_main(put)
+
+        self.assertNotIn("committedAt", put.calls[0][2])
+
+    def test_a_commit_the_github_app_already_synced_is_reported_as_no_new_version(self) -> None:
+        put = FakePut(
+            body=json.dumps(
+                {
+                    "snapshot": {
+                        "gitBranch": "main",
+                        "commitSha": "abc1234567",
+                        "runUrl": "https://github.com/o/r/commit/abc1234567",
+                        "endpoints": [],
+                    },
+                    "previous": None,
+                    "changes": {},
+                }
+            )
+        )
+
+        exit_code, _ = self.run_main(put)
+
+        self.assertEqual(exit_code, EXIT_OK)
+        summary = self.summary.read_text(encoding="utf-8")
+        self.assertIn("was already recorded by https://github.com/o/r/commit/abc1234567", summary)
+        self.assertNotIn("First snapshot", summary)
 
     def test_without_credentials_nothing_is_sent(self) -> None:
         put = FakePut()

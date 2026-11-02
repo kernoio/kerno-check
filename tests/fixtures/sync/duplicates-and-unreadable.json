@@ -1,0 +1,87 @@
+{
+  "description": "Repeated ids keep the first in walk order; files without a readable meta.path are reported. Within an app flows are read before endpoints, and apps in walk order.",
+  "files": {
+    "a/.kerno/scenarios/endpoints/GET/x/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /x',\n  path: 'GET /x',\n}\n\nexport default function scenario() {}\n",
+    "a/.kerno/scenarios/endpoints/GET/x/z/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /x',\n  path: 'GET /x',\n}\n\nexport default function scenario() {}\n",
+    "a/.kerno/scenarios/endpoints/GET/a-service/x/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /x',\n  path: 'GET /x',\n}\n\nexport default function scenario() {}\n",
+    "a/.kerno/scenarios/endpoints/GET/y/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /x',\n  path: 'GET /x',\n}\n\nexport default function scenario() {}\n",
+    "a/.kerno/scenarios/flows/f/one/happy_path.scenario.ts": "export default async function scenario() {}\n",
+    "a/.kerno/scenarios/flows/f/two/happy_path.scenario.ts": "export default async function scenario() {}\n",
+    "a/.kerno/scenarios/endpoints/GET/broken/no_meta.scenario.ts": "export default function scenario() {}\n",
+    "a/.kerno/scenarios/endpoints/GET/broken/meta_without_path.scenario.ts": "export const meta = { description: 'nothing' }\n",
+    "a/.kerno/scenarios/endpoints/GET/broken/path_before_meta.scenario.ts": "const x = { path: 'GET /early' }\nexport const meta = { description: 'late' }\n",
+    "a/.kerno/scenarios/endpoints/GET/broken/metadata_only.scenario.ts": "export const metadata = { path: 'GET /meta' }\n",
+    "a/.kerno/scenarios/endpoints/GET/broken/mixed_quotes.scenario.ts": "export const meta = { path: 'GET /mixed\" }\n",
+    "a/.kerno/scenarios/endpoints/GET/broken/digit_method.scenario.ts": "export const meta = { path: 'GET2 /x' }\n",
+    "a/.kerno/scenarios/endpoints/GET/broken/no_url.scenario.ts": "export const meta = { path: 'GET   ' }\n",
+    "a/.kerno/scenarios/endpoints/GET/broken/empty.scenario.ts": "",
+    "b/.kerno/scenarios/endpoints/GET/x/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /x',\n  path: 'GET /x',\n}\n\nexport default function scenario() {}\n",
+    "b/.kerno/scenarios/endpoints/GET/x/again/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /x',\n  path: 'GET /x',\n}\n\nexport default function scenario() {}\n"
+  },
+  "binaryFiles": {
+    "a/.kerno/scenarios/endpoints/GET/broken/latin1.scenario.ts": "ZXhwb3J0IGNvbnN0IG1ldGEgPSB7IHBhdGg6ICdHRVQgL2NhZuknIH0K"
+  },
+  "expected": {
+    "endpoints": [
+      {
+        "contentRoot": "a",
+        "method": "GET",
+        "urlPath": "/x",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "a/.kerno/scenarios/endpoints/GET/a-service/x/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "b",
+        "method": "GET",
+        "urlPath": "/x",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "b/.kerno/scenarios/endpoints/GET/x/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      }
+    ],
+    "flows": [
+      {
+        "contentRoot": "a",
+        "flowId": "f",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "a/.kerno/scenarios/flows/f/one/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      }
+    ],
+    "unreadable": [
+      "a/.kerno/scenarios/endpoints/GET/broken/digit_method.scenario.ts",
+      "a/.kerno/scenarios/endpoints/GET/broken/empty.scenario.ts",
+      "a/.kerno/scenarios/endpoints/GET/broken/latin1.scenario.ts",
+      "a/.kerno/scenarios/endpoints/GET/broken/meta_without_path.scenario.ts",
+      "a/.kerno/scenarios/endpoints/GET/broken/metadata_only.scenario.ts",
+      "a/.kerno/scenarios/endpoints/GET/broken/mixed_quotes.scenario.ts",
+      "a/.kerno/scenarios/endpoints/GET/broken/no_meta.scenario.ts",
+      "a/.kerno/scenarios/endpoints/GET/broken/no_url.scenario.ts",
+      "a/.kerno/scenarios/endpoints/GET/broken/path_before_meta.scenario.ts"
+    ],
+    "duplicates": [
+      "a/.kerno/scenarios/flows/f/two/happy_path.scenario.ts",
+      "a/.kerno/scenarios/endpoints/GET/x/happy_path.scenario.ts",
+      "a/.kerno/scenarios/endpoints/GET/x/z/happy_path.scenario.ts",
+      "a/.kerno/scenarios/endpoints/GET/y/happy_path.scenario.ts",
+      "b/.kerno/scenarios/endpoints/GET/x/again/happy_path.scenario.ts"
+    ],
+    "misplaced": []
+  }
+}

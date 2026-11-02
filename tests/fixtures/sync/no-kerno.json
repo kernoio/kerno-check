@@ -1,0 +1,14 @@
+{
+  "description": "A repository without any .kerno folder sends nothing.",
+  "files": {
+    "README.md": "# empty\n",
+    "src/.kernel/scenarios/endpoints/GET/x/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /x',\n  path: 'GET /x',\n}\n\nexport default function scenario() {}\n"
+  },
+  "expected": {
+    "endpoints": [],
+    "flows": [],
+    "unreadable": [],
+    "duplicates": [],
+    "misplaced": []
+  }
+}

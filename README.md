@@ -3,9 +3,57 @@
 Replay your committed Kerno scenarios against a running system under test, and report them as a
 pull-request check.
 
-One workflow file does both jobs Kerno needs from CI: it replays the scenarios on every pull
+Kerno needs two things from your repository: the scenarios replayed on every pull request, and
+the default branch's scenarios recorded after each merge, so the portal can show the suite growing.
+
+**Connect the Kerno GitHub App and main syncs automatically.** The App records every push to the
+default branch on its own, so CI only has to replay. This is the recommended setup:
+
+```yaml
+name: kerno
+
+on: pull_request
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  kerno:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Your application. Start it however you already do —
+      # this action only connects to it.
+      - run: docker compose up -d --wait
+
+      - uses: kernoio/kerno-check@v1
+        with:
+          sut-url: http://localhost:8080
+          api-key: ${{ secrets.KERNO_API_KEY }}
+
+      # Per-scenario detail in the Checks tab.
+      - if: always()
+        uses: mikepenz/action-junit-report@v6
+        with:
+          report_paths: kerno-junit.xml
+          comment: false
+```
+
+Add `KERNO_API_KEY` as a repository secret — see [Secrets and variables](#secrets-and-variables).
+
+Keep `permissions:` even if your repository's default token can write. Where the default
+`GITHUB_TOKEN` is read-only, a missing `pull-requests: write` means the PR comment never lands,
+and the action only warns — the check stays green and nobody notices.
+
+### Without the GitHub App
+
+If your organisation has not installed the App, or cannot, or Kerno cannot reach your repository
+host, the same workflow file can record main itself with `mode: sync`. It replays on every pull
 request, and after a merge that changes `.kerno` it sends the default branch's scenarios to the
-portal. This is the file the portal's Integrations page hands out:
+portal:
 
 ```yaml
 name: kerno
@@ -47,18 +95,13 @@ jobs:
           comment: false
 ```
 
-Add `KERNO_API_KEY` as a repository secret — see [Secrets and variables](#secrets-and-variables).
 The sync is filtered by `paths`: it runs after merges that touch `.kerno`, not after every merge.
 [Tracking the default branch](#tracking-the-default-branch) explains how it works.
 
-Keep `permissions:` even if your repository's default token can write. Where the default
-`GITHUB_TOKEN` is read-only, a missing `pull-requests: write` means the PR comment never lands,
-and the action only warns — the check stays green and nobody notices.
-
 ### Without a Kerno account
 
-Replay alone needs no account, no API key and no agent. Drop `push`, `workflow_dispatch`, `mode`
-and `api-key`:
+Replay alone needs no account, no API key and no agent. Drop `api-key` from the recommended
+workflow:
 
 ```yaml
 name: kerno
@@ -131,8 +174,8 @@ Three surfaces:
 
 | Surface | Who writes it | What it is for |
 |---------|----------------|----------------|
-| **PR comment** | this action | Totals, then one row per portal run (pass/fail and a report link). Totals only when there are no portal URLs. Never a row per scenario. |
-| **Checks tab** | `mikepenz/action-junit-report` | Per-scenario detail (expected vs actual, the failing assertion). |
+| **PR comment** | this action | Totals, then one row per endpoint or flow (pass/fail and a report link). Totals only when there are no portal URLs. Never a row per scenario. |
+| **Checks tab** | `mikepenz/action-junit-report` | Per-scenario detail (expected vs actual, the failing assertion). A flow is named by its id. |
 | **Job summary / log** | this action | The same table as the comment, plus the raw runner output. |
 
 The comment is the thing people read on the PR. Keep the JUnit reporter for the Checks tab, and
@@ -179,20 +222,22 @@ green with a warning — until someone replaces the secret with their own key.
 With portal credentials:
 
 ```markdown
-**Kerno check:** 12 passed, 1 failed, 0 skipped (13 total)
+**Kerno check:** 13 passed, 1 failed, 0 skipped (14 total)
 
-| Endpoint | Passed | Failed | Report |
+| Subject | Passed | Failed | Report |
 | --- | ---: | ---: | --- |
 | `services/orders · GET /health` | 2 | 0 | [open](https://portal.kerno.io/runs/…?org=…) |
 | `services/orders · POST /orders` | 4 | 1 | [open](https://portal.kerno.io/runs/…?org=…) |
+| `services/orders · checkout` | 1 | 0 | [open](https://portal.kerno.io/runs/…?org=…) |
 | `services/billing · GET /invoices` | 6 | 0 | [open](https://portal.kerno.io/runs/…?org=…) |
 ```
 
 Without credentials, or if opening a run failed, the table is omitted and only the totals line
 remains. The action upserts one comment (it does not stack a new one on every push).
 
-The linked page is the same `/runs/{id}` a generate or validate run opens. Each row is the HTTP
-capture from this replay — request, response, and status — not a stub rebuilt from JUnit.
+The linked page is the same `/runs/{id}` a generate or validate run opens. An endpoint row is that
+route's capture from this replay. A flow row is that flow, named by its id, and the run is stored
+under the same `FLOW` key the portal already uses. Neither is a stub rebuilt from JUnit.
 
 ### A complete workflow
 
@@ -300,7 +345,16 @@ letting a scenario fail deep in a database step while every HTTP assertion aroun
 ```
 
 Each application is replayed against its own URL. Use this instead of `sut-url`; a directory here
-is the one containing `.kerno`, relative to the repository root.
+is the one containing `.kerno`, relative to the repository root. `.` is the repository root, so a
+root application and another service on a different port are one step:
+
+```yaml
+      - uses: kernoio/kerno-check@v1
+        with:
+          apps: |
+            .=http://localhost:8088
+            superset/mcp_service=http://localhost:5008/mcp
+```
 
 One report is written per application, so `report-path` is a directory in this mode:
 
@@ -323,9 +377,16 @@ application does not need its workflow changed.
 ## Tracking the default branch
 
 The pull request check covers one branch. To let the Kerno portal show how your default branch's
-test suite grows over time, the [workflow at the top](#kerno-check) also runs `mode: sync` after
-merges to main that touch `.kerno` — not after every merge. One file does both, choosing the mode
-by event: on a pull request it replays; on a push to main, or a run by hand, it syncs.
+test suite grows over time, Kerno records a snapshot of main's scenarios for each commit.
+
+With the [GitHub App connected](#kerno-check), Kerno records every push to main itself and there is
+nothing to configure here. Without it, the [workflow without the App](#without-the-github-app) runs
+`mode: sync` after merges to main that touch `.kerno` — not after every merge. One file does both,
+choosing the mode by event: on a pull request it replays; on a push to main, or a run by hand, it
+syncs.
+
+Both can run side by side, for example while you move from `mode: sync` to the App. Each commit is
+recorded once, by whichever sends it first; the other's attempt changes nothing.
 
 ### How it works
 
@@ -336,10 +397,16 @@ by event: on a pull request it replays; on a push to main, or a run by hand, it 
   takes seconds. The start-up step only runs for pull requests.
 - **What it sends:** every committed scenario, with its endpoint (from the scenario's `meta.path`),
   its id (the file name), its file path, and its title and kind from the `plan.json` beside it.
-  Only scenarios are sent — not `.kerno/memory/` or any other file.
+  Flow scenarios under `.kerno/scenarios/flows/<flow>/` are sent under their flow's id (from its
+  `flow.json`, or the folder name). Only scenarios are sent — not `.kerno/memory/` or any other file.
+  A scenario file outside `endpoints/` and every flow folder is left out, and the step warns.
 - **Each commit is recorded once.** Running the workflow again for the same commit changes nothing.
-- **The job summary** lists what the merge changed: endpoints added and removed, and scenarios
-  added and removed per endpoint, each linked to the file at that commit.
+  When the GitHub App, or an earlier run, already recorded the commit, the job summary says so
+  instead of listing changes.
+- **Commit time.** The snapshot carries the commit's time — from the push event, or from the
+  checkout on a run by hand — so history is ordered by when commits landed, not when they synced.
+- **The job summary** lists what the merge changed: endpoints and flows added and removed, and
+  scenarios added and removed per endpoint or flow, each linked to the file at that commit.
 - **`paths`** means a merge that does not touch `.kerno` does not run it, and the last snapshot
   stays as it was — nothing changed, so there is nothing to record.
 - **`workflow_dispatch`** covers the first sync: nothing has merged yet when you set it up, so run
@@ -348,6 +415,9 @@ by event: on a pull request it replays; on a push to main, or a run by hand, it 
   nothing, so a manual run on a feature branch cannot become the default branch's history.
 - **Without `api-key`, sync sends nothing.** A key Kerno does not accept, or a failed request, is a
   warning and never fails the job.
+- **The GitHub App finds scenarios the same way.** becore's `KernoSnapshotBuilder` mirrors what
+  `sync.py` discovers. A change to the `meta.path` regex, the `plan.json` lookup or the skip rules
+  must change both, along with becore's golden fixtures, which mirror `tests/fixtures/sync/`.
 
 ### Edge cases
 
@@ -390,12 +460,12 @@ jobs:
 
 | Input | Required | Default | |
 |-------|----------|---------|-|
-| `mode` | no | `replay` | `replay` runs the scenarios as a check. `sync` sends the default branch's committed scenarios to Kerno after a merge — see [Tracking the default branch](#tracking-the-default-branch). |
+| `mode` | no | `replay` | `replay` runs the scenarios as a check. `sync` sends the default branch's committed scenarios to Kerno after a merge, for repositories without the GitHub App — see [Tracking the default branch](#tracking-the-default-branch). |
 | `sut-url` | in replay, unless `apps` | | Base URL of your running application. A `localhost` URL is rewritten to `host.docker.internal`, since scenarios execute inside a container. |
 | `app-dir` | no | *(repository root)* | Replay one application's scenarios. Unset discovers every `<app>/.kerno/scenarios` tree — what a monorepo usually wants. All discovered apps are replayed against the same `sut-url`. |
 | `scenarios` | no | *(all)* | Glob filter on the path relative to the scenarios directory, e.g. `endpoints/GET/**`. `*` stays within a segment, `**` crosses them. |
-| `image` | no | *(pinned digest)* | The runner image. Pinned by digest so a given version of this action always runs the same code. |
-| `apps` | no | | One `<dir>=<url>` per line, for a monorepo whose services listen on different ports. Each application is replayed against its own URL. Mutually exclusive with `sut-url` and `app-dir`. |
+| `image` | no | `kernoio/ts-sandbox:latest` | The runner image. Defaults to the production `latest` build; override to pin a digest or test an unreleased build. |
+| `apps` | no | | One `<dir>=<url>` per line, for a monorepo whose services listen on different ports. `.` is the repository root. Each application is replayed against its own URL. Mutually exclusive with `sut-url` and `app-dir`. |
 | `forward-env` | no | | Environment variable names to pass through to the scenarios, one per line, with values from this step's own `env:`. Only the names listed are forwarded. A name with no value fails the step before the container starts. |
 | `report-path` | no | `kerno-junit.xml` | Where the JUnit XML lands. A **directory** with `apps`, or when discovery finds more than one application, since the runner writes one report per application. |
 | `fail-on-failure` | no | `true` | Set `false` to report without gating. |

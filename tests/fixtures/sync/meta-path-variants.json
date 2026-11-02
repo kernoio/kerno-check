@@ -1,0 +1,181 @@
+{
+  "description": "How meta.path is read: any quote, a lower-case method, padding, CRLF, Unicode whitespace, a BOM, and the first path after `export const meta` even when another appears earlier.",
+  "files": {
+    "app/.kerno/scenarios/endpoints/x/single_quotes.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /single',\n  path: 'GET /single',\n}\n\nexport default function scenario() {}\n",
+    "app/.kerno/scenarios/endpoints/x/double_quotes.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /double',\n  path: \"GET /double\",\n}\n\nexport default function scenario() {}\n",
+    "app/.kerno/scenarios/endpoints/x/backticks.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /backticks',\n  path: `GET /backticks`,\n}\n\nexport default function scenario() {}\n",
+    "app/.kerno/scenarios/endpoints/x/lower_method.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /lower',\n  path: 'post /lower',\n}\n\nexport default function scenario() {}\n",
+    "app/.kerno/scenarios/endpoints/x/padded.scenario.ts": "export   const\tmeta = {\n  path :   '  delete    /padded/{id}   ' ,\n}\n",
+    "app/.kerno/scenarios/endpoints/x/crlf.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\r\n\r\nexport const meta = {\r\n  description: 'Checks /crlf',\r\n  path: 'PUT /crlf',\r\n}\r\n\r\nexport default function scenario() {}\r\n",
+    "app/.kerno/scenarios/endpoints/x/nbsp.scenario.ts": "export const meta = { path: 'PATCH /nbsp' }\n",
+    "app/.kerno/scenarios/endpoints/x/bom.scenario.ts": "﻿import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /bom',\n  path: 'GET /bom',\n}\n\nexport default function scenario() {}\n",
+    "app/.kerno/scenarios/endpoints/x/query.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /search?q=1&sort=desc',\n  path: 'GET /search?q=1&sort=desc',\n}\n\nexport default function scenario() {}\n",
+    "app/.kerno/scenarios/endpoints/x/prose_first.scenario.ts": "// path: 'GET /prose'\nconst other = { path: 'GET /other' }\nexport const meta = {\n  title: 'x',\n  path: 'GET /after-meta',\n  nested: { path: 'GET /nested' },\n}\n",
+    "app/.kerno/scenarios/endpoints/x/two_metas.scenario.ts": "export const meta = { title: 'no path here' }\nexport const meta2 = { path: 'GET /second' }\n",
+    "app/.kerno/scenarios/endpoints/x/multiline.scenario.ts": "export const meta = {\n  path:\n    'GET /multi\n     line',\n}\n"
+  },
+  "expected": {
+    "endpoints": [
+      {
+        "contentRoot": "app",
+        "method": "DELETE",
+        "urlPath": "/padded/{id}",
+        "scenarios": [
+          {
+            "id": "padded",
+            "filePath": "app/.kerno/scenarios/endpoints/x/padded.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "method": "GET",
+        "urlPath": "/after-meta",
+        "scenarios": [
+          {
+            "id": "prose_first",
+            "filePath": "app/.kerno/scenarios/endpoints/x/prose_first.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "method": "GET",
+        "urlPath": "/backticks",
+        "scenarios": [
+          {
+            "id": "backticks",
+            "filePath": "app/.kerno/scenarios/endpoints/x/backticks.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "method": "GET",
+        "urlPath": "/bom",
+        "scenarios": [
+          {
+            "id": "bom",
+            "filePath": "app/.kerno/scenarios/endpoints/x/bom.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "method": "GET",
+        "urlPath": "/double",
+        "scenarios": [
+          {
+            "id": "double_quotes",
+            "filePath": "app/.kerno/scenarios/endpoints/x/double_quotes.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "method": "GET",
+        "urlPath": "/multi\n     line",
+        "scenarios": [
+          {
+            "id": "multiline",
+            "filePath": "app/.kerno/scenarios/endpoints/x/multiline.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "method": "GET",
+        "urlPath": "/search?q=1&sort=desc",
+        "scenarios": [
+          {
+            "id": "query",
+            "filePath": "app/.kerno/scenarios/endpoints/x/query.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "method": "GET",
+        "urlPath": "/second",
+        "scenarios": [
+          {
+            "id": "two_metas",
+            "filePath": "app/.kerno/scenarios/endpoints/x/two_metas.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "method": "GET",
+        "urlPath": "/single",
+        "scenarios": [
+          {
+            "id": "single_quotes",
+            "filePath": "app/.kerno/scenarios/endpoints/x/single_quotes.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "method": "PATCH",
+        "urlPath": "/nbsp",
+        "scenarios": [
+          {
+            "id": "nbsp",
+            "filePath": "app/.kerno/scenarios/endpoints/x/nbsp.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "method": "POST",
+        "urlPath": "/lower",
+        "scenarios": [
+          {
+            "id": "lower_method",
+            "filePath": "app/.kerno/scenarios/endpoints/x/lower_method.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "method": "PUT",
+        "urlPath": "/crlf",
+        "scenarios": [
+          {
+            "id": "crlf",
+            "filePath": "app/.kerno/scenarios/endpoints/x/crlf.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      }
+    ],
+    "flows": [],
+    "unreadable": [],
+    "duplicates": [],
+    "misplaced": []
+  }
+}

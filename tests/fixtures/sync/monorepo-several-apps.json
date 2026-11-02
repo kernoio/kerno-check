@@ -1,0 +1,151 @@
+{
+  "description": "A root app and several apps under apps/ and services/, with endpoints and flows in each; content roots are the folders holding .kerno.",
+  "files": {
+    ".kerno/scenarios/endpoints/GET/health/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /health',\n  path: 'GET /health',\n}\n\nexport default function scenario() {}\n",
+    ".kerno/scenarios/endpoints/GET/health/plan.json": "{\n  \"scenarios\": [\n    {\n      \"id\": \"happy_path\",\n      \"spec\": {\n        \"id\": \"happy_path\",\n        \"title\": \"Reports healthy\",\n        \"kind\": \"happy_path\"\n      }\n    }\n  ]\n}\n",
+    "apps/orders/.kerno/scenarios/endpoints/POST/orders/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /orders',\n  path: 'POST /orders',\n}\n\nexport default function scenario() {}\n",
+    "apps/orders/.kerno/scenarios/endpoints/POST/orders/missing_items.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /orders',\n  path: 'POST /orders',\n}\n\nexport default function scenario() {}\n",
+    "apps/orders/.kerno/scenarios/endpoints/POST/orders/plan.json": "{\n  \"scenarios\": [\n    {\n      \"id\": \"happy_path\",\n      \"spec\": {\n        \"id\": \"happy_path\",\n        \"title\": \"Places an order\",\n        \"kind\": \"happy_path\"\n      }\n    },\n    {\n      \"id\": \"missing_items\",\n      \"spec\": {\n        \"id\": \"missing_items\",\n        \"title\": \"Rejects an empty cart\",\n        \"kind\": \"validation\"\n      }\n    }\n  ]\n}\n",
+    "apps/orders/.kerno/scenarios/endpoints/POST/orders/preconditions.ts": "export const ready = true\n",
+    "apps/orders/.kerno/scenarios/endpoints/POST/orders/happy_path.scenario.md": "# Places an order\n",
+    "apps/orders/.kerno/scenarios/endpoints/GET/orders/{id}/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /orders/{id}',\n  path: 'GET /orders/{id}',\n}\n\nexport default function scenario() {}\n",
+    "apps/orders/.kerno/scenarios/endpoints/GET/orders/{id}/not_found.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /orders/{id}',\n  path: 'GET /orders/{id}',\n}\n\nexport default function scenario() {}\n",
+    "apps/orders/.kerno/scenarios/flows/checkout/flow.json": "{\"id\": \"checkout\", \"description\": \"Buy a cart\", \"steps\": []}\n",
+    "apps/orders/.kerno/scenarios/flows/checkout/plan.json": "{\n  \"scenarios\": [\n    {\n      \"id\": \"checkout\",\n      \"spec\": {\n        \"id\": \"checkout\",\n        \"title\": \"Buys a cart\",\n        \"kind\": \"happy_path\"\n      }\n    }\n  ]\n}\n",
+    "apps/orders/.kerno/scenarios/flows/checkout/checkout.scenario.ts": "export default async function scenario() {}\n",
+    "apps/orders/.kerno/scenarios/flows/checkout/preconditions.ts": "export const ready = true\n",
+    "apps/billing/.kerno/scenarios/endpoints/GET/invoices/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /invoices',\n  path: 'GET /invoices',\n}\n\nexport default function scenario() {}\n",
+    "apps/billing/.kerno/scenarios/endpoints/POST/billing/invoices/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /invoices',\n  path: 'POST /invoices',\n}\n\nexport default function scenario() {}\n",
+    "apps/billing/.kerno/memory/notes.md": "# not a scenario\n",
+    "apps/billing/.kerno/analysis/security-analysis.md": "# not a scenario\n",
+    "apps/billing/.kerno/config.yaml": "sut: {}\n",
+    "services/payments/api/.kerno/scenarios/endpoints/POST/payments/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /payments',\n  path: 'POST /payments',\n}\n\nexport default function scenario() {}\n",
+    "services/payments/api/.kerno/scenarios/flows/refund/flow.json": "{\"id\": \"refund\"}\n",
+    "services/payments/api/.kerno/scenarios/flows/refund/refund.scenario.ts": "export default async function scenario() {}\n",
+    "apps/orders/src/main.ts": "export {}\n",
+    "README.md": "# shop\n"
+  },
+  "expected": {
+    "endpoints": [
+      {
+        "contentRoot": "",
+        "method": "GET",
+        "urlPath": "/health",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": ".kerno/scenarios/endpoints/GET/health/happy_path.scenario.ts",
+            "title": "Reports healthy",
+            "kind": "happy_path"
+          }
+        ]
+      },
+      {
+        "contentRoot": "apps/billing",
+        "method": "GET",
+        "urlPath": "/invoices",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "apps/billing/.kerno/scenarios/endpoints/GET/invoices/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "apps/billing",
+        "method": "POST",
+        "urlPath": "/invoices",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "apps/billing/.kerno/scenarios/endpoints/POST/billing/invoices/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "apps/orders",
+        "method": "GET",
+        "urlPath": "/orders/{id}",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "apps/orders/.kerno/scenarios/endpoints/GET/orders/{id}/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          },
+          {
+            "id": "not_found",
+            "filePath": "apps/orders/.kerno/scenarios/endpoints/GET/orders/{id}/not_found.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "apps/orders",
+        "method": "POST",
+        "urlPath": "/orders",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "apps/orders/.kerno/scenarios/endpoints/POST/orders/happy_path.scenario.ts",
+            "title": "Places an order",
+            "kind": "happy_path"
+          },
+          {
+            "id": "missing_items",
+            "filePath": "apps/orders/.kerno/scenarios/endpoints/POST/orders/missing_items.scenario.ts",
+            "title": "Rejects an empty cart",
+            "kind": "validation"
+          }
+        ]
+      },
+      {
+        "contentRoot": "services/payments/api",
+        "method": "POST",
+        "urlPath": "/payments",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "services/payments/api/.kerno/scenarios/endpoints/POST/payments/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      }
+    ],
+    "flows": [
+      {
+        "contentRoot": "apps/orders",
+        "flowId": "checkout",
+        "scenarios": [
+          {
+            "id": "checkout",
+            "filePath": "apps/orders/.kerno/scenarios/flows/checkout/checkout.scenario.ts",
+            "title": "Buys a cart",
+            "kind": "happy_path"
+          }
+        ]
+      },
+      {
+        "contentRoot": "services/payments/api",
+        "flowId": "refund",
+        "scenarios": [
+          {
+            "id": "refund",
+            "filePath": "services/payments/api/.kerno/scenarios/flows/refund/refund.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      }
+    ],
+    "unreadable": [],
+    "duplicates": [],
+    "misplaced": []
+  }
+}

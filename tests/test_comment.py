@@ -54,13 +54,36 @@ class FormatCommentTest(unittest.TestCase):
                 ),
             ],
         )
-        self.assertIn("| Endpoint | Passed | Failed | Report |", body)
+        self.assertIn("| Subject | Passed | Failed | Report |", body)
         self.assertIn("| `app · GET /health` | 1 | 0 | [open](https://portal.test/runs/run-1?org=org-1) |", body)
         self.assertIn(
             "| `app · POST /orders` | 2 | 1 | [open](https://portal.test/runs/run-2?org=org-1) |",
             body,
         )
         self.assertNotIn("fixture_pass", body)
+
+    def test_a_flow_is_named_by_its_id(self) -> None:
+        body = format_comment(
+            passed=8,
+            failed=3,
+            skipped=0,
+            runs=[
+                run(endpoint="POST /api/v1/chart/data", content_root="", passed=7, failed=2),
+                run(
+                    endpoint="viewer-sees-only-own-team",
+                    content_root="",
+                    passed=0,
+                    failed=1,
+                    url="https://portal.test/runs/run-2?org=org-1",
+                ),
+            ],
+        )
+        self.assertIn("| `POST /api/v1/chart/data` | 7 | 2 |", body)
+        self.assertIn(
+            "| `viewer-sees-only-own-team` | 0 | 1 | [open](https://portal.test/runs/run-2?org=org-1) |",
+            body,
+        )
+        self.assertNotIn("FLOW", body)
 
     def test_a_blank_content_root_does_not_prefix_the_endpoint(self) -> None:
         body = format_comment(passed=1, failed=0, skipped=0, runs=[run(content_root="")])

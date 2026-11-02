@@ -1,0 +1,168 @@
+{
+  "description": "Titles and kinds come only from plan.json entries whose id matches the file name; anything else in a plan, or a plan that cannot be read, leaves them null.",
+  "files": {
+    "app/.kerno/scenarios/endpoints/GET/unmatched/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /unmatched',\n  path: 'GET /unmatched',\n}\n\nexport default function scenario() {}\n",
+    "app/.kerno/scenarios/endpoints/GET/unmatched/plan.json": "{\n  \"scenarios\": [\n    {\n      \"id\": \"happy-path\",\n      \"spec\": {\n        \"id\": \"happy-path\",\n        \"title\": \"Dashed id\",\n        \"kind\": \"happy_path\"\n      }\n    },\n    {\n      \"id\": \"happy_path_v2\",\n      \"spec\": {\n        \"id\": \"happy_path_v2\",\n        \"title\": \"Other id\",\n        \"kind\": \"edge_case\"\n      }\n    }\n  ]\n}\n",
+    "app/.kerno/scenarios/endpoints/GET/partial/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /partial',\n  path: 'GET /partial',\n}\n\nexport default function scenario() {}\n",
+    "app/.kerno/scenarios/endpoints/GET/partial/cross_org.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /partial',\n  path: 'GET /partial',\n}\n\nexport default function scenario() {}\n",
+    "app/.kerno/scenarios/endpoints/GET/partial/plan.json": "{\n  \"scenarios\": [\n    {\n      \"id\": \"cross_org\",\n      \"spec\": {\n        \"id\": \"cross_org\",\n        \"title\": \"Hides other orgs\",\n        \"kind\": \"security\"\n      }\n    }\n  ]\n}\n",
+    "app/.kerno/scenarios/endpoints/GET/odd-entries/a.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /odd-entries',\n  path: 'GET /odd-entries',\n}\n\nexport default function scenario() {}\n",
+    "app/.kerno/scenarios/endpoints/GET/odd-entries/b.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /odd-entries',\n  path: 'GET /odd-entries',\n}\n\nexport default function scenario() {}\n",
+    "app/.kerno/scenarios/endpoints/GET/odd-entries/c.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /odd-entries',\n  path: 'GET /odd-entries',\n}\n\nexport default function scenario() {}\n",
+    "app/.kerno/scenarios/endpoints/GET/odd-entries/d.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /odd-entries',\n  path: 'GET /odd-entries',\n}\n\nexport default function scenario() {}\n",
+    "app/.kerno/scenarios/endpoints/GET/odd-entries/e.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /odd-entries',\n  path: 'GET /odd-entries',\n}\n\nexport default function scenario() {}\n",
+    "app/.kerno/scenarios/endpoints/GET/odd-entries/plan.json": "{\n  \"scenarios\": [\n    \"a\",\n    {\n      \"id\": 7,\n      \"spec\": {\n        \"title\": \"Numeric id\"\n      }\n    },\n    {\n      \"id\": \"a\",\n      \"spec\": \"not an object\"\n    },\n    {\n      \"id\": \"b\",\n      \"spec\": {\n        \"title\": \"   \",\n        \"kind\": 3\n      }\n    },\n    {\n      \"id\": \"c\",\n      \"spec\": {\n        \"title\": \"First\",\n        \"kind\": \"happy_path\"\n      }\n    },\n    {\n      \"id\": \"c\",\n      \"spec\": {\n        \"title\": \"  Last wins  \",\n        \"kind\": \"edge_case\"\n      }\n    },\n    {\n      \"id\": \"d\"\n    },\n    {\n      \"id\": \"e\",\n      \"spec\": {\n        \"title\": \"Only a title\"\n      }\n    }\n  ]\n}\n",
+    "app/.kerno/scenarios/endpoints/GET/broken-plan/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /broken-plan',\n  path: 'GET /broken-plan',\n}\n\nexport default function scenario() {}\n",
+    "app/.kerno/scenarios/endpoints/GET/broken-plan/plan.json": "{ not json\n",
+    "app/.kerno/scenarios/endpoints/GET/list-plan/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /list-plan',\n  path: 'GET /list-plan',\n}\n\nexport default function scenario() {}\n",
+    "app/.kerno/scenarios/endpoints/GET/list-plan/plan.json": "[{\"id\": \"happy_path\", \"spec\": {\"title\": \"In a list\"}}]\n",
+    "app/.kerno/scenarios/endpoints/GET/no-scenarios-key/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /no-scenarios-key',\n  path: 'GET /no-scenarios-key',\n}\n\nexport default function scenario() {}\n",
+    "app/.kerno/scenarios/endpoints/GET/no-scenarios-key/plan.json": "{\"entries\": []}\n",
+    "app/.kerno/scenarios/endpoints/GET/bom-plan/happy_path.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /bom-plan',\n  path: 'GET /bom-plan',\n}\n\nexport default function scenario() {}\n",
+    "app/.kerno/scenarios/endpoints/GET/bom-plan/plan.json": "﻿{\n  \"scenarios\": [\n    {\n      \"id\": \"happy_path\",\n      \"spec\": {\n        \"id\": \"happy_path\",\n        \"title\": \"Behind a BOM\",\n        \"kind\": \"happy_path\"\n      }\n    }\n  ]\n}\n",
+    "app/.kerno/scenarios/endpoints/GET/parent-plan/plan.json": "{\n  \"scenarios\": [\n    {\n      \"id\": \"child\",\n      \"spec\": {\n        \"id\": \"child\",\n        \"title\": \"Parent plan\",\n        \"kind\": \"happy_path\"\n      }\n    }\n  ]\n}\n",
+    "app/.kerno/scenarios/endpoints/GET/parent-plan/nested/child.scenario.ts": "import {ctx} from '@kerno/ts-sandbox'\n\nexport const meta = {\n  description: 'Checks /parent-plan',\n  path: 'GET /parent-plan',\n}\n\nexport default function scenario() {}\n"
+  },
+  "expected": {
+    "endpoints": [
+      {
+        "contentRoot": "app",
+        "method": "GET",
+        "urlPath": "/bom-plan",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "app/.kerno/scenarios/endpoints/GET/bom-plan/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "method": "GET",
+        "urlPath": "/broken-plan",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "app/.kerno/scenarios/endpoints/GET/broken-plan/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "method": "GET",
+        "urlPath": "/list-plan",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "app/.kerno/scenarios/endpoints/GET/list-plan/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "method": "GET",
+        "urlPath": "/no-scenarios-key",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "app/.kerno/scenarios/endpoints/GET/no-scenarios-key/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "method": "GET",
+        "urlPath": "/odd-entries",
+        "scenarios": [
+          {
+            "id": "a",
+            "filePath": "app/.kerno/scenarios/endpoints/GET/odd-entries/a.scenario.ts",
+            "title": null,
+            "kind": null
+          },
+          {
+            "id": "b",
+            "filePath": "app/.kerno/scenarios/endpoints/GET/odd-entries/b.scenario.ts",
+            "title": null,
+            "kind": null
+          },
+          {
+            "id": "c",
+            "filePath": "app/.kerno/scenarios/endpoints/GET/odd-entries/c.scenario.ts",
+            "title": "  Last wins  ",
+            "kind": "edge_case"
+          },
+          {
+            "id": "d",
+            "filePath": "app/.kerno/scenarios/endpoints/GET/odd-entries/d.scenario.ts",
+            "title": null,
+            "kind": null
+          },
+          {
+            "id": "e",
+            "filePath": "app/.kerno/scenarios/endpoints/GET/odd-entries/e.scenario.ts",
+            "title": "Only a title",
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "method": "GET",
+        "urlPath": "/parent-plan",
+        "scenarios": [
+          {
+            "id": "child",
+            "filePath": "app/.kerno/scenarios/endpoints/GET/parent-plan/nested/child.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "method": "GET",
+        "urlPath": "/partial",
+        "scenarios": [
+          {
+            "id": "cross_org",
+            "filePath": "app/.kerno/scenarios/endpoints/GET/partial/cross_org.scenario.ts",
+            "title": "Hides other orgs",
+            "kind": "security"
+          },
+          {
+            "id": "happy_path",
+            "filePath": "app/.kerno/scenarios/endpoints/GET/partial/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      },
+      {
+        "contentRoot": "app",
+        "method": "GET",
+        "urlPath": "/unmatched",
+        "scenarios": [
+          {
+            "id": "happy_path",
+            "filePath": "app/.kerno/scenarios/endpoints/GET/unmatched/happy_path.scenario.ts",
+            "title": null,
+            "kind": null
+          }
+        ]
+      }
+    ],
+    "flows": [],
+    "unreadable": [],
+    "duplicates": [],
+    "misplaced": []
+  }
+}

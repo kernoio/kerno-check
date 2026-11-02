@@ -4,57 +4,30 @@ Customers write `uses: kernoio/kerno-check@v1`. That tag **moves**: it always po
 `v1.x.y`. The version tags themselves never move, so anyone needing a frozen reference pins
 `@v1.2.3` or a commit SHA.
 
-## The order matters
+## The runner image
 
-This action is a thin wrapper around the `kernoio/ts-sandbox` image, and the version tag records
-whatever image pin was in the tree at that commit. So the pin is bumped and merged **before** the
-tag is pushed — a tag cut first would ship the previous image no matter what happens afterwards.
+This action is a thin wrapper around `kernoio/ts-sandbox`. The `image` input defaults to
+`kernoio/ts-sandbox:latest`, which is updated when `aicore` publishes ts-sandbox to production.
+Customers on `@v1` pick up a new runner on their next replay without a new kerno-check release.
+
+To pin a specific build, pass `image:` with a digest. CI checks that the **default** stays on
+`latest` and that whatever that default resolves to at test time still writes the HTTP capture — see
+`.github/scripts/verify_runner_image_default.py` and `verify_default_runner_image.py`.
+
+## Cutting a release
 
 ```
-1. publish the image      (aicore: ts-sandbox-publish.yaml)
-2. read its digest
-3. bump the pin here      (PR, merged to main)
-4. push the version tag   (release.yml does the rest)
+1. merge changes to main (self-test must pass)
+2. push the version tag   (release.yml does the rest)
 ```
-
-### 1–2. Publish the image and read its digest
-
-The image lives in `kernoio/aicore`. Once the intended commit is published, read the **multi-arch
-manifest** digest:
-
-```bash
-docker buildx imagetools inspect kernoio/ts-sandbox:<tag> \
-  --format '{{json .Manifest.Digest}}' | tr -d '"'
-```
-
-Use the manifest digest, not a per-architecture one. `aicore`'s publish workflow pushes
-`<sha>-amd64` and `<sha>-arm64` separately and only creates the multi-arch manifest under a moving
-tag (`dev-latest`, or `<version>` and `latest` for a prod publish) — so pinning a `-amd64` tag
-would break every arm64 runner.
-
-Confirm it resolves for both architectures before using it:
-
-```bash
-docker manifest inspect kernoio/ts-sandbox@sha256:<digest>
-```
-
-### 3. Bump the pin
-
-Edit the `image` input's default in `action.yml`, and open a pull request. CI refuses anything that
-is not a digest — see `.github/scripts/verify_image_pin.py`.
-
-Merging runs the self-test against the new image, which is the point of doing this as its own step:
-a bad image is caught here rather than by a customer.
-
-### 4. Push the version tag
 
 ```bash
 git checkout main && git pull
 git tag v1.2.3 && git push origin v1.2.3
 ```
 
-`release.yml` then re-verifies the pin, re-runs the self-test **against the tagged commit**, moves
-`v1` to it, and creates a GitHub Release. Nothing is published if any of that fails.
+`release.yml` re-runs the self-test **against the tagged commit**, moves `v1` to it, and creates a
+GitHub Release. Nothing is published if any of that fails.
 
 ## Choosing the number
 
@@ -65,9 +38,10 @@ inside it:
 |-|-|
 | **major** | an input removed or renamed, a default changed in a way that alters behaviour, or an output dropped. Requires a new moving tag (`v2`) and a note for anyone on `v1`. |
 | **minor** | a new optional input, a new output, a new capability |
-| **patch** | a bug fix, a docs change, or an image bump that does not change the interface |
+| **patch** | a bug fix or a docs change |
 
-Most releases are patches: an image bump carrying a fix from `aicore`.
+Image fixes ship through `ts-sandbox:latest`; they do not require a kerno-check release unless the
+action's own code or interface changed.
 
 This differs from the CalVer used elsewhere in the org (`kerno-agent-runtimes`, and the ts-sandbox
 image tags) on purpose. Those version *artefacts a tool downloads*, where a date is a fine label.

@@ -27,13 +27,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Cheap, no Docker: a released version must never carry a floating image reference.
+  # Cheap, no Docker: the runner default must stay on production latest, not a dev tag or digest.
   validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: The image must be pinned by digest
-        run: python3 .github/scripts/verify_image_pin.py
+      - name: The runner image must default to production latest
+        run: python3 .github/scripts/verify_runner_image_default.py
+
+      - name: The default runner image can publish the HTTP capture
+        run: python3 .github/scripts/verify_default_runner_image.py
 
       # An unevaluatable expression stops action.yml LOADING, for every consumer — not a failing
       # test but a dead action. Cheap to check here rather than discovering it in a self-test run.
@@ -88,13 +91,16 @@ jobs:
           echo "outputs: total=$TOTAL passed=$PASSED failed=$FAILED skipped=$SKIPPED junit=$JUNIT"
 
           problems=()
-          [ "$TOTAL" = "2" ]   || problems+=("total was '$TOTAL', expected 2")
-          [ "$PASSED" = "1" ]  || problems+=("passed was '$PASSED', expected 1")
+          # test-fixture: one endpoint pass, one endpoint stub, one flow pass.
+          [ "$TOTAL" = "3" ]   || problems+=("total was '$TOTAL', expected 3")
+          [ "$PASSED" = "2" ]  || problems+=("passed was '$PASSED', expected 2")
           [ "$FAILED" = "0" ]  || problems+=("failed was '$FAILED', expected 0")
           # The one that matters: a stub must never be counted as a pass.
           [ "$SKIPPED" = "1" ] || problems+=("skipped was '$SKIPPED', expected 1 — a stub was miscounted")
           [ "$JUNIT" = "reports/kerno-junit.xml" ] || problems+=("junit-path was '$JUNIT'")
           [ -f reports/kerno-junit.xml ] || problems+=("the report was not written to report-path")
+          # The default runner image must write the capture the portal step reads.
+          [ -f kerno-run-report.json ] || problems+=("the default runner image wrote no capture at kerno-run-report.json")
           # No credentials were passed; a URL here would mean the no-account path started calling home.
           [ -z "$PORTAL" ] || problems+=("portal-run-urls was '$PORTAL' without api-key")
 
@@ -210,9 +216,9 @@ jobs:
           echo "outputs: total=$TOTAL passed=$PASSED failed=$FAILED skipped=$SKIPPED junit=$JUNIT"
 
           problems=()
-          # 2 from test-fixture (one pass, one stub) + 1 from test-fixture-second.
-          [ "$TOTAL" = "3" ]   || problems+=("total was '$TOTAL', expected 3 — did discovery find both applications?")
-          [ "$PASSED" = "2" ]  || problems+=("passed was '$PASSED', expected 2")
+          # 3 from test-fixture (one endpoint pass, one stub, one flow pass) + 1 from test-fixture-second.
+          [ "$TOTAL" = "4" ]   || problems+=("total was '$TOTAL', expected 4 — did discovery find both applications?")
+          [ "$PASSED" = "3" ]  || problems+=("passed was '$PASSED', expected 3")
           [ "$FAILED" = "0" ]  || problems+=("failed was '$FAILED', expected 0")
           [ "$SKIPPED" = "1" ] || problems+=("skipped was '$SKIPPED', expected 1 — a stub was miscounted")
           # The regression this job exists for: several discovered applications used to abort the
@@ -293,9 +299,9 @@ jobs:
           echo "outputs: total=$TOTAL passed=$PASSED failed=$FAILED skipped=$SKIPPED"
 
           problems=()
-          # 2 from test-fixture (one pass, one stub) + 1 from test-fixture-second.
-          [ "$TOTAL" = "3" ]   || problems+=("total was '$TOTAL', expected 3 — was one application skipped entirely?")
-          [ "$PASSED" = "2" ]  || problems+=("passed was '$PASSED', expected 2")
+          # 3 from test-fixture (one endpoint pass, one stub, one flow pass) + 1 from test-fixture-second.
+          [ "$TOTAL" = "4" ]   || problems+=("total was '$TOTAL', expected 4 — was one application skipped entirely?")
+          [ "$PASSED" = "3" ]  || problems+=("passed was '$PASSED', expected 3")
           [ "$FAILED" = "0" ]  || problems+=("failed was '$FAILED', expected 0 — the second app asserts its own URL and the forwarded variable, so a failure here means one of those did not arrive")
           [ "$SKIPPED" = "1" ] || problems+=("skipped was '$SKIPPED', expected 1 — a stub was miscounted")
 
@@ -335,3 +341,86 @@ jobs:
       - name: Tear down
         if: ${{ always() }}
         run: docker rm -f multi-sut-a multi-sut-b kerno-check-run 2>/dev/null || true
+
+  # A repository-root application (`.kerno` at `.`) plus a second application on its own URL.
+  # Naming the root `.` used to exit 2 before any scenario ran, because the runner keys that
+  # application as an empty path and does not keep walking past it.
+  self-test-root-app:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Put the first fixture at the repository root
+        run: cp -a test-fixture/.kerno .kerno
+
+      - name: Start two systems under test
+        run: |
+          set -euo pipefail
+          docker run -d --name root-sut-a -p 8080:9876 \
+            kernoio/ts-sandbox@sha256:0f5d2c152dcfd1ad0ceb5dbbf42b6b966de03d3a3d869c4f48f3a3d03eac74d1
+          docker run -d --name root-sut-b -p 8081:9876 \
+            kernoio/ts-sandbox@sha256:0f5d2c152dcfd1ad0ceb5dbbf42b6b966de03d3a3d869c4f48f3a3d03eac74d1
+          for port in 8080 8081; do
+            ready=false
+            for _ in $(seq 1 45); do
+              if curl -fsS -o /dev/null "http://localhost:$port/"; then ready=true; break; fi
+              sleep 2
+            done
+            if [ "$ready" != true ]; then
+              echo "the system under test on $port never became ready" >&2
+              exit 1
+            fi
+            echo "SUT on $port ready"
+          done
+
+      - name: Run the action with the root application and a second URL
+        id: kerno
+        uses: ./
+        with:
+          apps: |
+            .=http://localhost:8080
+            test-fixture-second=http://localhost:8081
+          forward-env: |
+            KERNO_SELF_TEST_TOKEN
+          report-path: reports/root
+        env:
+          KERNO_SELF_TEST_TOKEN: forwarded-ok
+
+      - name: Assert both applications were replayed
+        if: ${{ always() }}
+        env:
+          TOTAL: ${{ steps.kerno.outputs.total }}
+          PASSED: ${{ steps.kerno.outputs.passed }}
+          FAILED: ${{ steps.kerno.outputs.failed }}
+          SKIPPED: ${{ steps.kerno.outputs.skipped }}
+          JUNIT: ${{ steps.kerno.outputs.junit-path }}
+        run: |
+          set -euo pipefail
+          echo "outputs: total=$TOTAL passed=$PASSED failed=$FAILED skipped=$SKIPPED junit=$JUNIT"
+
+          problems=()
+          # Root is a copy of test-fixture (one endpoint pass, one stub, one flow pass) plus test-fixture-second's one pass.
+          [ "$TOTAL" = "4" ]   || problems+=("total was '$TOTAL', expected 4 — was the root application left out?")
+          [ "$PASSED" = "3" ]  || problems+=("passed was '$PASSED', expected 3")
+          [ "$FAILED" = "0" ]  || problems+=("failed was '$FAILED', expected 0 — the second app asserts its own URL and the forwarded variable")
+          [ "$SKIPPED" = "1" ] || problems+=("skipped was '$SKIPPED', expected 1 — a stub was miscounted")
+          [ "$JUNIT" = "reports/root" ] || problems+=("junit-path was '$JUNIT', expected reports/root")
+          [ -f reports/root/junit-root.xml ] || problems+=("the root application wrote no report")
+          [ -f reports/root/junit-test-fixture-second.xml ] || problems+=("the second application wrote no report")
+
+          for problem in "${problems[@]:-}"; do
+            [ -n "$problem" ] && echo "::error::$problem"
+          done
+          [ "${#problems[@]}" -eq 0 ]
+
+      - name: Systems under test logs on failure
+        if: ${{ failure() }}
+        run: |
+          docker logs root-sut-a 2>&1 | tail -40
+          docker logs root-sut-b 2>&1 | tail -40
+
+      - name: Tear down
+        if: ${{ always() }}
+        run: docker rm -f root-sut-a root-sut-b kerno-check-run 2>/dev/null || true
