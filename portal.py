@@ -19,14 +19,18 @@ import urllib.error
 import urllib.request
 from collections import defaultdict
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 DEFAULT_BACKEND_URL = "https://api.kerno.io"
 DEFAULT_EVENTS_URL = "https://events.kerno.io/events-service/"
 DEFAULT_PORTAL_URL = "https://portal.kerno.io"
 VIRTUAL_KEY_HEADER = "x-kerno-virtual-key-id"
 EXCHANGE_PATH = "/api/api-keys/exchange"
+# Endpoints uploaded at once. Each upload is two short calls to events-service, so the wait is
+# network latency, not CPU; 16 turns ~100 endpoints from ~100 s into a few seconds.
+PUBLISH_WORKERS = 16
 
 HttpCall = Callable[[str, dict[str, str], bytes], tuple[int, str]]
 
@@ -58,6 +62,10 @@ class PortalRun:
     skipped: int
     run_report_id: str
     portal_run_url: str
+
+
+# One endpoint's upload: the run, or None and the warning that says why it was skipped.
+_Outcome = tuple[Optional[PortalRun], Optional[str]]
 
 
 def load_credentials(http_post: HttpCall | None = None) -> Credentials | None:
@@ -248,83 +256,101 @@ def publish_runs(
     http_post: HttpCall = default_http,
     http_patch: HttpCall = default_http_patch,
 ) -> list[PortalRun]:
-    events_base = config.events_url.rstrip("/")
+    """Open and finish one run per endpoint, PUBLISH_WORKERS endpoints at a time.
+
+    Each endpoint's warnings are printed once all uploads finish, in sorted endpoint order, so the
+    log and the returned runs read the same as a one-at-a-time upload.
+    """
+    endpoints = [
+        (key, rows, group)
+        for key, group in sorted(group_by_endpoint(scenarios).items())
+        if (rows := _rows(group))
+    ]
+    if not endpoints:
+        return []
+
+    def publish(item: tuple[tuple[str, str, str], list[dict[str, Any]], list[dict[str, Any]]]) -> _Outcome:
+        key, rows, group = item
+        return _publish_endpoint(key, rows, group, config, http_post, http_patch)
+
+    with ThreadPoolExecutor(max_workers=min(PUBLISH_WORKERS, len(endpoints))) as pool:
+        outcomes = list(pool.map(publish, endpoints))
+
     published: list[PortalRun] = []
-    for (content_root, method, path), group in sorted(group_by_endpoint(scenarios).items()):
-        rows = _rows(group)
-        if not rows:
-            continue
-        endpoint = f"{method} {path}"
-        start_body = json.dumps(
-            {
-                "gitRepo": config.git_repo,
-                "gitBranch": config.git_branch,
-                "contentRoot": content_root,
-                "method": method,
-                "urlPath": path,
-                "commitSha": config.commit_sha or None,
-                "status": "running",
-            }
-        ).encode("utf-8")
-        start_url = f"{events_base}/organizations/{config.organization_id}/run-reports"
-        try:
-            status, raw = http_post(start_url, json_headers(config.virtual_key_id), start_body)
-        except (OSError, TimeoutError) as error:
-            print(f"::warning::could not open a portal run for {endpoint}: {error}")
-            continue
-        if status >= 300:
-            print(f"::warning::could not open a portal run for {endpoint} (HTTP {status})")
-            continue
-        try:
-            run_report_id = json.loads(raw).get("id")
-        except json.JSONDecodeError:
-            run_report_id = None
-        if not run_report_id:
-            print(f"::warning::events-service opened {endpoint} without an id")
-            continue
-
-        passed, failed, skipped, diffs = _counts(group)
-        finish_body = json.dumps(
-            {
-                "status": "completed",
-                "outcome": "diffs_rejected" if diffs else "no_diffs",
-                "totalScenarios": len(rows),
-                "diffsDetected": diffs,
-                "scenariosAdded": 0,
-                "scenariosUpdated": 0,
-                "scenariosRemoved": 0,
-                "report": {"scenarios": rows},
-            }
-        ).encode("utf-8")
-        finish_url = (
-            f"{events_base}/organizations/{config.organization_id}/run-reports/{run_report_id}"
-        )
-        try:
-            finish_status, _ = http_patch(finish_url, json_headers(config.virtual_key_id), finish_body)
-        except (OSError, TimeoutError) as error:
-            print(
-                f"::warning::opened {endpoint} as {run_report_id} but could not finish it: {error}"
-            )
-            continue
-        if finish_status >= 300:
-            print(
-                f"::warning::opened {endpoint} as {run_report_id} but finish returned HTTP {finish_status}"
-            )
-            continue
-
-        published.append(
-            PortalRun(
-                endpoint=endpoint,
-                content_root=content_root,
-                passed=passed,
-                failed=failed,
-                skipped=skipped,
-                run_report_id=str(run_report_id),
-                portal_run_url=portal_run_url(
-                    config.portal_url,
-                    config.organization_id,
-                    str(run_report_id),
-                ),
-            )
-        )
+    for run, warning in outcomes:
+        if warning:
+            print(warning)
+        if run is not None:
+            published.append(run)
     return published
+
+
+def _publish_endpoint(
+    key: tuple[str, str, str],
+    rows: list[dict[str, Any]],
+    group: list[dict[str, Any]],
+    config: PortalConfig,
+    http_post: HttpCall,
+    http_patch: HttpCall,
+) -> _Outcome:
+    content_root, method, path = key
+    events_base = config.events_url.rstrip("/")
+    endpoint = f"{method} {path}"
+    start_body = json.dumps(
+        {
+            "gitRepo": config.git_repo,
+            "gitBranch": config.git_branch,
+            "contentRoot": content_root,
+            "method": method,
+            "urlPath": path,
+            "commitSha": config.commit_sha or None,
+            "status": "running",
+        }
+    ).encode("utf-8")
+    start_url = f"{events_base}/organizations/{config.organization_id}/run-reports"
+    try:
+        status, raw = http_post(start_url, json_headers(config.virtual_key_id), start_body)
+    except (OSError, TimeoutError) as error:
+        return None, f"::warning::could not open a portal run for {endpoint}: {error}"
+    if status >= 300:
+        return None, f"::warning::could not open a portal run for {endpoint} (HTTP {status})"
+    try:
+        run_report_id = json.loads(raw).get("id")
+    except json.JSONDecodeError:
+        run_report_id = None
+    if not run_report_id:
+        return None, f"::warning::events-service opened {endpoint} without an id"
+
+    passed, failed, skipped, diffs = _counts(group)
+    finish_body = json.dumps(
+        {
+            "status": "completed",
+            "outcome": "diffs_rejected" if diffs else "no_diffs",
+            "totalScenarios": len(rows),
+            "diffsDetected": diffs,
+            "scenariosAdded": 0,
+            "scenariosUpdated": 0,
+            "scenariosRemoved": 0,
+            "report": {"scenarios": rows},
+        }
+    ).encode("utf-8")
+    finish_url = f"{events_base}/organizations/{config.organization_id}/run-reports/{run_report_id}"
+    try:
+        finish_status, _ = http_patch(finish_url, json_headers(config.virtual_key_id), finish_body)
+    except (OSError, TimeoutError) as error:
+        return None, f"::warning::opened {endpoint} as {run_report_id} but could not finish it: {error}"
+    if finish_status >= 300:
+        return None, f"::warning::opened {endpoint} as {run_report_id} but finish returned HTTP {finish_status}"
+
+    return (
+        PortalRun(
+            endpoint=endpoint,
+            content_root=content_root,
+            passed=passed,
+            failed=failed,
+            skipped=skipped,
+            run_report_id=str(run_report_id),
+            portal_run_url=portal_run_url(config.portal_url, config.organization_id, str(run_report_id)),
+        ),
+        None,
+    )
