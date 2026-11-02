@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -305,9 +306,12 @@ class PublishRunsTest(unittest.TestCase):
         posts: list[tuple[str, dict[str, str], bytes]] = []
         patches: list[tuple[str, dict[str, str], bytes]] = []
 
+        # Uploads run concurrently, so ids come from the endpoint, not the call order.
+        run_ids = {"/health": "run-1", "/orders": "run-2"}
+
         def http_post(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
             posts.append((url, headers, body))
-            return 201, json.dumps({"id": f"run-{len(posts)}"})
+            return 201, json.dumps({"id": run_ids[json.loads(body)["urlPath"]]})
 
         def http_patch(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
             patches.append((url, headers, body))
@@ -334,6 +338,8 @@ class PublishRunsTest(unittest.TestCase):
         )
         self.assertEqual(len(posts), 2)
         self.assertEqual(len(patches), 2)
+        posts.sort(key=lambda call: json.loads(call[2])["urlPath"])
+        patches.sort(key=lambda call: call[0])
         self.assertEqual(posts[0][1][VIRTUAL_KEY_HEADER], VIRTUAL_KEY_ID)
         start = json.loads(posts[0][2])
         self.assertEqual(start["method"], "GET")
@@ -366,7 +372,8 @@ class PublishRunsTest(unittest.TestCase):
 
         def http_post(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
             posts.append((url, headers, body))
-            return 201, json.dumps({"id": f"run-{len(posts)}"})
+            # Uploads run concurrently, so ids come from the subject, not the call order.
+            return 201, json.dumps({"id": "run-" + json.loads(body)["urlPath"].strip("/").replace("/", "-")})
 
         def http_patch(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
             return 200, ""
@@ -393,12 +400,12 @@ class PublishRunsTest(unittest.TestCase):
         )
         opened = [json.loads(body) for _, _, body in posts]
         self.assertEqual(
-            [(item["method"], item["urlPath"]) for item in opened],
-            [
+            sorted((item["method"], item["urlPath"]) for item in opened),
+            sorted([
                 (FLOW_METHOD, "analyst-builds-dashboard"),
                 (FLOW_METHOD, "viewer-sees-only-own-team"),
                 ("POST", "/api/v1/chart/data"),
-            ],
+            ]),
         )
 
     def test_does_not_invent_rows_when_the_capture_has_none(self) -> None:
@@ -436,6 +443,84 @@ class PublishRunsTest(unittest.TestCase):
             http_post=http_post,
         )
         self.assertEqual(runs, [])
+
+
+    def test_endpoints_upload_at_the_same_time(self) -> None:
+        delay = 0.2
+        endpoints = 8
+
+        def http_post(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
+            time.sleep(delay)
+            return 201, json.dumps({"id": "run" + json.loads(body)["urlPath"].replace("/", "-")})
+
+        def http_patch(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
+            time.sleep(delay)
+            return 200, ""
+
+        started = time.monotonic()
+        runs = publish_runs(
+            [scenario(name=f"s{i}", endpoint=f"GET /e{i}") for i in range(endpoints)],
+            portal_config(),
+            http_post=http_post,
+            http_patch=http_patch,
+        )
+        elapsed = time.monotonic() - started
+
+        self.assertEqual(len(runs), endpoints)
+        # One at a time would take endpoints × 2 × delay = 3.2 s; together it is about 2 × delay.
+        self.assertLess(elapsed, endpoints * 2 * delay / 3)
+
+    def test_one_failing_endpoint_warns_and_skips_only_that_endpoint(self) -> None:
+        def http_post(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
+            path = json.loads(body)["urlPath"]
+            if path == "/down":
+                raise OSError("connection reset")
+            return 201, json.dumps({"id": "run" + path.replace("/", "-")})
+
+        def http_patch(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
+            if url.endswith("/run-rejected"):
+                return 500, "boom"
+            return 200, ""
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            runs = publish_runs(
+                [
+                    scenario(name="a", endpoint="GET /a"),
+                    scenario(name="down", endpoint="GET /down"),
+                    scenario(name="rejected", endpoint="GET /rejected"),
+                    scenario(name="z", endpoint="GET /z"),
+                ],
+                portal_config(),
+                http_post=http_post,
+                http_patch=http_patch,
+            )
+
+        self.assertEqual([run.endpoint for run in runs], ["GET /a", "GET /z"])
+        self.assertEqual(
+            output.getvalue().splitlines(),
+            [
+                "::warning::could not open a portal run for GET /down: connection reset",
+                "::warning::opened GET /rejected as run-rejected but finish returned HTTP 500",
+            ],
+        )
+
+    def test_runs_come_back_in_endpoint_order_whatever_finishes_first(self) -> None:
+        paths = ["/a", "/b", "/c", "/d", "/e"]
+
+        def http_post(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
+            path = json.loads(body)["urlPath"]
+            # Earlier endpoints answer last.
+            time.sleep(0.05 * (len(paths) - paths.index(path)))
+            return 201, json.dumps({"id": "run" + path.replace("/", "-")})
+
+        runs = publish_runs(
+            [scenario(name=path, endpoint=f"GET {path}") for path in reversed(paths)],
+            portal_config(),
+            http_post=http_post,
+            http_patch=lambda url, headers, body: (200, ""),
+        )
+        self.assertEqual([run.endpoint for run in runs], [f"GET {path}" for path in paths])
 
 
 if __name__ == "__main__":
