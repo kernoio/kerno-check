@@ -18,7 +18,7 @@ def run(
     passed: int = 1,
     failed: int = 0,
     skipped: int = 0,
-    url: str = "https://portal.test/runs/run-1?org=org-1",
+    url: str = "https://portal.test/org-1/runs/run-1",
 ) -> PortalRun:
     return PortalRun(
         endpoint=endpoint,
@@ -50,14 +50,14 @@ class FormatCommentTest(unittest.TestCase):
                     endpoint="POST /orders",
                     passed=2,
                     failed=1,
-                    url="https://portal.test/runs/run-2?org=org-1",
+                    url="https://portal.test/org-1/runs/run-2",
                 ),
             ],
         )
         self.assertIn("| Subject | Passed | Failed | Report |", body)
-        self.assertIn("| `app · GET /health` | 1 | 0 | [open](https://portal.test/runs/run-1?org=org-1) |", body)
+        self.assertIn("| `app · GET /health` | 1 | 0 | [open](https://portal.test/org-1/runs/run-1) |", body)
         self.assertIn(
-            "| `app · POST /orders` | 2 | 1 | [open](https://portal.test/runs/run-2?org=org-1) |",
+            "| `app · POST /orders` | 2 | 1 | [open](https://portal.test/org-1/runs/run-2) |",
             body,
         )
         self.assertNotIn("fixture_pass", body)
@@ -74,13 +74,13 @@ class FormatCommentTest(unittest.TestCase):
                     content_root="",
                     passed=0,
                     failed=1,
-                    url="https://portal.test/runs/run-2?org=org-1",
+                    url="https://portal.test/org-1/runs/run-2",
                 ),
             ],
         )
         self.assertIn("| `POST /api/v1/chart/data` | 7 | 2 |", body)
         self.assertIn(
-            "| `viewer-sees-only-own-team` | 0 | 1 | [open](https://portal.test/runs/run-2?org=org-1) |",
+            "| `viewer-sees-only-own-team` | 0 | 1 | [open](https://portal.test/org-1/runs/run-2) |",
             body,
         )
         self.assertNotIn("FLOW", body)

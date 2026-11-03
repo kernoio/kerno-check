@@ -226,16 +226,16 @@ With portal credentials:
 
 | Subject | Passed | Failed | Report |
 | --- | ---: | ---: | --- |
-| `services/orders · GET /health` | 2 | 0 | [open](https://portal.kerno.io/runs/…?org=…) |
-| `services/orders · POST /orders` | 4 | 1 | [open](https://portal.kerno.io/runs/…?org=…) |
-| `services/orders · checkout` | 1 | 0 | [open](https://portal.kerno.io/runs/…?org=…) |
-| `services/billing · GET /invoices` | 6 | 0 | [open](https://portal.kerno.io/runs/…?org=…) |
+| `services/orders · GET /health` | 2 | 0 | [open](https://portal.kerno.io/…/runs/…) |
+| `services/orders · POST /orders` | 4 | 1 | [open](https://portal.kerno.io/…/runs/…) |
+| `services/orders · checkout` | 1 | 0 | [open](https://portal.kerno.io/…/runs/…) |
+| `services/billing · GET /invoices` | 6 | 0 | [open](https://portal.kerno.io/…/runs/…) |
 ```
 
 Without credentials, or if opening a run failed, the table is omitted and only the totals line
 remains. The action upserts one comment (it does not stack a new one on every push).
 
-The linked page is the same `/runs/{id}` a generate or validate run opens. An endpoint row is that
+The linked page is the same `/{org-id}/runs/{id}` a generate or validate run opens. An endpoint row is that
 route's capture from this replay. A flow row is that flow, named by its id, and the run is stored
 under the same `FLOW` key the portal already uses. Neither is a stub rebuilt from JUnit.
 

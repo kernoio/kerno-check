@@ -102,7 +102,7 @@ class ReportPortalTest(unittest.TestCase):
                         failed=0,
                         skipped=1,
                         run_report_id="run-1",
-                        portal_run_url="https://portal.test/runs/run-1?org=org-1",
+                        portal_run_url="https://portal.test/org-1/runs/run-1",
                     )
                 ]
 
@@ -113,11 +113,11 @@ class ReportPortalTest(unittest.TestCase):
             ), patch("report.publish_runs", side_effect=fake_publish), patch("report.load_criticality", return_value=CriticalitySet((), SOURCE_NONE)):
                 self.assertEqual(report.main(), 0)
             output = github_output.read_text(encoding="utf-8")
-            self.assertIn("https://portal.test/runs/run-1?org=org-1", output)
+            self.assertIn("https://portal.test/org-1/runs/run-1", output)
             summary = step_summary.read_text(encoding="utf-8")
             self.assertIn("**Kerno check:** 1 passed, 0 failed, 1 skipped (2 total)", summary)
             self.assertIn(
-                "| `test-fixture · GET /` | 1 | 0 | [open](https://portal.test/runs/run-1?org=org-1) |",
+                "| `test-fixture · GET /` | 1 | 0 | [open](https://portal.test/org-1/runs/run-1) |",
                 summary,
             )
 

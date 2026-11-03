@@ -222,7 +222,7 @@ def run_label(method: str, url_path: str) -> str:
 
 
 def portal_run_url(portal_url: str, organization_id: str, run_report_id: str) -> str:
-    return f"{portal_url.rstrip('/')}/runs/{run_report_id}?org={organization_id}"
+    return f"{portal_url.rstrip('/')}/{organization_id}/runs/{run_report_id}"
 
 
 def default_http(url: str, headers: dict[str, str], body: bytes) -> tuple[int, str]:
