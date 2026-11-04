@@ -297,7 +297,7 @@ class PortalRunUrlTest(unittest.TestCase):
     def test_the_run_lives_at_runs_and_carries_the_org(self) -> None:
         self.assertEqual(
             portal_run_url("https://portal.kerno.io/", "org-1", "run-7"),
-            "https://portal.kerno.io/runs/run-7?org=org-1",
+            "https://portal.kerno.io/org-1/runs/run-7",
         )
 
 
@@ -332,8 +332,8 @@ class PublishRunsTest(unittest.TestCase):
         self.assertEqual(
             [(run.endpoint, run.passed, run.failed, run.skipped, run.portal_run_url) for run in runs],
             [
-                ("GET /health", 1, 0, 1, "https://portal.test/runs/run-1?org=org-1"),
-                ("POST /orders", 0, 1, 0, "https://portal.test/runs/run-2?org=org-1"),
+                ("GET /health", 1, 0, 1, "https://portal.test/org-1/runs/run-1"),
+                ("POST /orders", 0, 1, 0, "https://portal.test/org-1/runs/run-2"),
             ],
         )
         self.assertEqual(len(posts), 2)

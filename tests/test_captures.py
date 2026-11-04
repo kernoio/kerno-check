@@ -49,7 +49,7 @@ class MergeRunReportsTest(unittest.TestCase):
                 failed=0,
                 skipped=0,
                 run_report_id="run-1",
-                portal_run_url="https://portal.test/runs/run-1?org=org-1",
+                portal_run_url="https://portal.test/org-1/runs/run-1",
             )
             for (content_root, method, path), group in sorted(grouped.items())
         ]
