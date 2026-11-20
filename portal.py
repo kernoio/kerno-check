@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 DEFAULT_BACKEND_URL = "https://api.kerno.io"
-DEFAULT_EVENTS_URL = "https://events.kerno.io/events-service/"
+DEFAULT_EVENTS_URL = "https://api.kerno.io/api/events/"
 DEFAULT_PORTAL_URL = "https://portal.kerno.io"
 VIRTUAL_KEY_HEADER = "x-kerno-virtual-key-id"
 EXCHANGE_PATH = "/api/api-keys/exchange"

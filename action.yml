@@ -100,8 +100,8 @@ inputs:
     default: ""
   events-url:
     description: >-
-      Events-service base URL used to open and finish portal runs. Leave unset for production
-      (https://events.kerno.io/events-service/). Override for development.
+      Kerno events base URL used to open and finish portal runs. Leave unset for production
+      (https://api.kerno.io/api/events/). Override for development.
     required: false
     default: ""
   portal-url:
