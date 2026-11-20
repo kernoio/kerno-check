@@ -307,7 +307,7 @@ Defaults point at production. Override all three together for the development po
 
 ```yaml
           backend-url: https://api.dev.kerno.io
-          events-url: https://events.dev.kerno.io/events-service/
+          events-url: https://api.dev.kerno.io/api/events/
           portal-url: https://portal.dev.kerno.io
 ```
 
@@ -472,7 +472,7 @@ jobs:
 | `api-key` | no | | Your API key from Settings → API key, as a secret. Opens a portal run per endpoint and prints the URL, or sends the snapshot in `sync` mode. Leave unset for the no-account path. A key Kerno does not accept is a warning, not a failed step. |
 | `organization-id` | no | *(the key's)* | Only for a key that belongs to several organizations. An error without `api-key`. |
 | `backend-url` | no | *(production)* | Kerno API base URL, used to check `api-key`. Override for development. |
-| `events-url` | no | *(production)* | Events-service base URL. Override for development. |
+| `events-url` | no | *(production)* | Kerno events base URL. Override for development. |
 | `portal-url` | no | *(production)* | Portal base URL used to build the printed links. Override for development. |
 
 ## Outputs
